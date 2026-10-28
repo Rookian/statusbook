@@ -100,7 +100,7 @@ input[type="checkbox"] { accent-color: var(--ink); }
 .head { position: relative; display: flex; align-items: center; gap: 14px; padding: 14px 24px 2px; flex-wrap: wrap; row-gap: 8px; }
 .head .grow { flex: 1; }
 .head h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; color: #fff; }
-.head > .icon { width: 26px; height: 26px; color: #fff; }
+.head .brand { width: 38px; height: 38px; flex: none; filter: drop-shadow(0 2px 6px rgba(0, 40, 40, .25)); }
 .head .title { display: flex; flex-direction: column; min-width: 0; }
 #journeyName { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
 #journeyWhen { color: rgba(255, 255, 255, .85); font-size: 12.5px; white-space: nowrap; }
