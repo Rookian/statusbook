@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Statusbook</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- The shoreline: lagoon water under the journey's name and its steps, washing onto the limestone. -->
+  <header id="shore">
+    <svg class="waves" viewBox="0 0 2400 120" preserveAspectRatio="none" aria-hidden="true">
+      <path class="w1" d="M0 40 C 140 22 260 58 420 44 S 700 18 860 36 S 1080 62 1200 40 C 1340 22 1460 58 1620 44 S 1900 18 2060 36 S 2280 62 2400 40 V120 H0Z"/>
+      <path class="w2" d="M0 62 C 160 48 300 80 480 64 S 760 44 940 60 S 1110 78 1200 62 C 1360 48 1500 80 1680 64 S 1960 44 2140 60 S 2310 78 2400 62 V120 H0Z"/>
+      <path class="w3" d="M0 86 C 120 76 280 100 440 90 S 720 72 900 88 S 1100 98 1200 86 C 1320 76 1480 100 1640 90 S 1920 72 2100 88 S 2300 98 2400 86 V120 H0Z"/>
+      <path class="foam" d="M0 86 C 120 76 280 100 440 90 S 720 72 900 88 S 1100 98 1200 86 C 1320 76 1480 100 1640 90 S 1920 72 2100 88 S 2300 98 2400 86"/>
+    </svg>
+    <div class="head">
+      <!-- On the journeys page: the title and "New journey". In a journey: its name, then its steps. -->
+      <span class="journeys-only brand" data-icon="waves"></span>
+      <h1 class="journeys-only">Your journeys</h1>
+      <button id="journeysBtn" class="in-journey quiet" title="All your journeys"><span data-icon="back"></span>Journeys</button>
+      <div class="in-journey title">
+        <h1 id="journeyName"></h1>
+        <div id="journeyWhen"></div>
+      </div>
+      <span class="grow"></span>
+      <button id="newJourneyBtn" class="primary journeys-only"><span data-icon="plus"></span>New journey</button>
+      <nav class="stepnav in-journey" role="tablist">
+        <button id="tabReleases" class="on" role="tab"><span data-icon="releases"></span>Releases</button>
+        <button id="tabPick" role="tab" title="Pick photos and scenes for the release you are making"><span data-icon="pick"></span>Pick</button>
+        <button id="tabArrange" role="tab" title="Captions, text posts, order and day intros of the release you are making"><span data-icon="arrange"></span>Arrange <span id="postCount"></span></button>
+        <button id="journeyEditBtn" class="icon-only" title="Journey settings: name, folder"><span data-icon="settings"></span></button>
+      </nav>
+    </div>
+    <div class="subbar in-journey">
+      <span id="postsSummary" class="posts-only"></span>
+      <span id="summary" class="pick-only"></span>
+      <label class="chk arrange-only"><input type="checkbox" id="showRemoved"> Show removed <span id="removedCount"></span></label>
+    </div>
+  </header>
+
+  <main id="pickView">
+    <div id="pickCol">
+      <div id="pickBar"></div>
+      <aside id="list" tabindex="-1"></aside>
+    </div>
+    <section id="viewer">
+      <div id="stage"><div class="empty">Choose a journey to start.</div></div>
+      <div id="videoPanel" hidden>
+        <div id="timeline" title="Click to jump">
+          <div id="tlScenes"></div>
+          <div id="tlPending"></div>
+          <div id="tlHead"></div>
+        </div>
+        <div id="sceneBar">
+          <button id="markIn">I · Scene start</button>
+          <button id="markOut">O · Scene end</button>
+          <span id="pendingInfo"></span>
+          <span id="timeInfo"></span>
+        </div>
+        <ol id="sceneList"></ol>
+      </div>
+      <div id="infoBar"></div>
+    </section>
+  </main>
+
+  <main id="postsView" hidden>
+    <div id="postsCol">
+      <div id="publishPanel" hidden></div>
+      <section id="gallery" tabindex="-1"></section>
+    </div>
+    <section id="postEditor">
+      <div id="postPreview">
+        <canvas id="postCanvas" width="360" height="640"></canvas>
+        <div id="postPlayBar" hidden>
+          <button id="postPlay">▶ Play</button>
+          <span id="postTime"></span>
+        </div>
+      </div>
+      <div id="postEmpty" class="muted">
+        <p>Every starred photo and every marked scene is a post here, sorted by time.
+        Click a post to write its WhatsApp caption. Use <b>＋ Text</b> to put a text-only post anywhere.</p>
+      </div>
+      <div id="postFields" hidden>
+        <!-- Text on the picture: only for text-only posts. Photos and videos get a caption. -->
+        <label class="field" id="pTextField"><span>Text on the picture</span>
+          <textarea id="pText" rows="4" placeholder="e.g. Day 3 in Ubud 🌴"></textarea>
+          <small class="muted">Emoji: press <b>Win + .</b> while typing. Flags don't work here.</small>
+        </label>
+        <div class="field" id="introField"><span>Day map</span>
+          <div id="introInfo"></div>
+        </div>
+        <div class="field" id="pPosField"><span>Position</span>
+          <div class="seg" id="pPos"><button data-v="top">Top</button><button data-v="middle">Middle</button><button data-v="bottom">Bottom</button></div>
+        </div>
+        <div class="field" id="pStyleField"><span>Style</span>
+          <div class="seg" id="pStyle"><button data-v="shadow">Shadow</button><button data-v="box">Dark box</button><button data-v="light">Light box</button></div>
+        </div>
+        <div class="field" id="pSizeField"><span>Size</span>
+          <div class="seg" id="pSize"><button data-v="s">S</button><button data-v="m">M</button><button data-v="l">L</button></div>
+        </div>
+        <div class="field" id="pBgField"><span>Background</span>
+          <div id="pBg" class="swatches"></div>
+        </div>
+        <label class="field"><span>WhatsApp caption <small class="muted">(shown under the post; paste it when posting)</small></span>
+          <textarea id="pCaption" rows="4" placeholder="e.g. Rice terraces near Ubud 🌾"></textarea>
+          <small class="muted">Emoji: <b>Win + .</b> while typing. Flags 🇮🇩 work in captions.</small>
+        </label>
+        <button id="pCopyCaption">📋 Copy caption</button>
+        <div class="field" id="geoField"><span>Location</span>
+          <div id="geoInfo"></div>
+        </div>
+        <div id="pRelease"></div>
+        <p id="pInfo" class="muted"></p>
+        <div class="editor-btns">
+          <button id="pEarlier" title="Move this post one place earlier (Shift + ←)">◀ Earlier</button>
+          <button id="pLater" title="Move this post one place later (Shift + →)">Later ▶</button>
+        </div>
+        <div class="editor-btns">
+          <button id="pTextBefore" title="Insert a text-only post in front of this post">＋ Text post before</button>
+          <button id="pTextAfter" title="Insert a text-only post right after this post">＋ Text post after</button>
+          <button id="pRemove" class="danger"></button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+
+  <main id="journeysView" hidden>
+    <section id="journeyList"></section>
+  </main>
+
+  <footer id="help">
+    <span class="journeys-only">
+      Click a journey to open it · <b>⚙</b> name and folder · each journey is one folder with all its photos and videos;
+      stars, scenes, posts and releases are kept in it
+    </span>
+    <span class="pick-only">
+      <b>↑ / ↓</b> next file · <b>F</b> pick a photo · <b>Space</b> play / pause · <b>← / →</b> ±2 s (with Shift ±10 s) ·
+      <b>I</b> scene start · <b>O</b> scene end · <b>Esc</b> cancel start · <b>C</b> collapse day ·
+      picked photos and scenes go into the release you are making; released files can't be picked again
+    </span>
+    <span class="posts-only">
+      <b>← / →</b> previous / next post · <b>Shift + ← / →</b> or drag to move a post · <b>Space</b> play clip · <b>Del</b> remove / restore post ·
+      <b>＋ Text</b> on a post adds a text post after it · <b>Win + .</b> emoji ·
+      releases are split into parts within WhatsApp's limits; publish each part when you like
+    </span>
+  </footer>
+
+  <dialog id="postsDlg">
+    <h2>Create release</h2>
+    <div id="postsSetup">
+      <p id="postsExportSummary"></p>
+      <ul id="postsWarnings"></ul>
+      <div class="btns">
+        <button id="postsCancel">Cancel</button>
+        <button id="postsGo" class="primary">Create release</button>
+      </div>
+    </div>
+    <div id="postsProgress" hidden>
+      <progress id="postsBar" value="0" max="1"></progress>
+      <p id="postsStatus"></p>
+      <ul id="postsErrors"></ul>
+      <div class="btns">
+        <button id="postsReveal">Open release folder</button>
+        <button id="postsClose" class="primary">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- New journey, or the settings of one: a name and its one folder. -->
+  <dialog id="journeyDlg">
+    <h2 id="journeyDlgTitle">New journey</h2>
+    <label class="field"><span>Name</span>
+      <input type="text" id="journeyNameInput" maxlength="80" spellcheck="false" placeholder="Indonesia 2026">
+    </label>
+    <div class="field"><span>Folder <small class="muted">(all photos and videos of this journey; posts and releases are kept in it too)</small></span>
+      <div class="folder-row">
+        <input type="text" id="journeyFolderInput" spellcheck="false" placeholder="D:Indonesia 2026">
+        <button id="journeyFolderPick">📁 Choose…</button>
+      </div>
+    </div>
+    <p id="journeyDlgError" class="warnline" hidden></p>
+    <div class="btns">
+      <button id="journeyRemove" class="danger" title="Takes it off the list; the folder and its files stay">Remove from list</button>
+      <span class="grow"></span>
+      <button id="journeyCancel">Cancel</button>
+      <button id="journeySave" class="primary">Create journey</button>
+    </div>
+  </dialog>
+
+  <dialog id="googleDlg">
+    <h2>Google Maps place names</h2>
+    <p id="googleStatus"></p>
+    <p class="muted">To get place names from Google, you need your own Google Maps API key:</p>
+    <ol class="steps">
+      <li>Open the <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> and sign in with your Google account.</li>
+      <li>Create a project: project picker in the top bar → <b>New project</b>, e.g. "Statusbook".</li>
+      <li>Set up billing when asked (<b>Billing</b>). Google requires a billing account even for the free amount.</li>
+      <li>Turn on the <a href="https://console.cloud.google.com/apis/library/geocoding-backend.googleapis.com" target="_blank" rel="noopener">Geocoding API</a>: click <b>Enable</b>.</li>
+      <li><b>APIs &amp; Services → Credentials → Create credentials → API key</b>, then copy the key.</li>
+      <li>Recommended: edit the key → <b>API restrictions → Restrict key → Geocoding API</b>. You can also set a daily limit under the Geocoding API's <b>Quotas</b>.</li>
+    </ol>
+    <p class="muted">Cost: Google gives 10,000 free lookups per month (as of 2026). The tool looks up each spot only once and keeps the names.</p>
+    <label class="field"><span>Your API key</span>
+      <input type="password" id="googleKeyInput" autocomplete="off" spellcheck="false" placeholder="AIza…">
+      <small class="muted">Stored only on this PC (settings.json next to the app). Only coordinates are sent to Google, and only when you click "Look up place name".</small>
+    </label>
+    <div class="btns">
+      <button id="googleRemove">Remove key</button>
+      <button id="googleCancel">Cancel</button>
+      <button id="googleSave" class="primary">Save key</button>
+    </div>
+  </dialog>
+
+  <!-- Viewer: a picture or video at real size (double-click a file anywhere). -->
+  <dialog id="viewer-dlg">
+    <div id="viewerBar">
+      <span id="viewerTitle"></span>
+      <span id="viewerInfo" class="muted"></span>
+      <span class="grow"></span>
+      <button id="viewerFit" title="Switch between fit to window and real size">Real size</button>
+      <button id="viewerClose" title="Close (Esc)">✕</button>
+    </div>
+    <div id="viewerStage"></div>
+  </dialog>
+
+  <div id="toast"></div>
+  <script src="icons.js"></script>
+  <script src="app.js"></script>
+  <script src="posts.js"></script>
+  <script src="journeys.js"></script>
+</body>
+</html>

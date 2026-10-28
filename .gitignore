@@ -1,0 +1,17 @@
+# Private: never commit these
+# - Google Maps API key, journeys, view state
+settings.json
+# - the signed-in WhatsApp Web session
+whatsapp-profile/
+# - design drafts with copies of trip photos
+design/
+
+# Caches, rebuilt automatically
+places.json
+maps/
+
+# Installed packages (npm install)
+node_modules/
+
+# Local tool settings
+.claude/

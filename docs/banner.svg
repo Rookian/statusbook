@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="Statusbook: travel releases for your WhatsApp Status">
+  <defs>
+    <linearGradient id="lagoon" x1="0" y1="0" x2="1" y2="0.35">
+      <stop offset="0" stop-color="#0e8fa0"/>
+      <stop offset="0.38" stop-color="#19b3ad"/>
+      <stop offset="0.72" stop-color="#2f9f7a"/>
+      <stop offset="1" stop-color="#2d7f55"/>
+    </linearGradient>
+    <linearGradient id="stone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f1ece2"/>
+      <stop offset="1" stop-color="#e4ddce"/>
+    </linearGradient>
+    <clipPath id="round"><rect width="1200" height="300" rx="24"/></clipPath>
+  </defs>
+  <g clip-path="url(#round)">
+    <rect width="1200" height="300" fill="url(#lagoon)"/>
+    <!-- waves washing onto the limestone -->
+    <path d="M0 196 C 140 178 260 214 420 200 S 700 174 860 192 S 1080 218 1200 196 V300 H0Z" fill="#ffffff" fill-opacity=".14"/>
+    <path d="M0 218 C 160 204 300 236 480 220 S 760 200 940 216 S 1110 234 1200 218 V300 H0Z" fill="#bef0e1" fill-opacity=".25"/>
+    <path d="M0 244 C 120 234 280 258 440 248 S 720 230 900 246 S 1100 256 1200 244 V300 H0Z" fill="url(#stone)"/>
+    <path d="M0 244 C 120 234 280 258 440 248 S 720 230 900 246 S 1100 256 1200 244" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <!-- the wave mark from the app -->
+  <g fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" transform="translate(62 70) scale(2.6)">
+    <path d="M3 10c3-3 6 3 9 0s6 3 9 0"/>
+    <path d="M3 15c3-3 6 3 9 0s6 3 9 0"/>
+  </g>
+  <text x="140" y="128" font-family="Segoe UI Variable, Segoe UI, Helvetica, Arial, sans-serif" font-size="64" font-weight="700" fill="#ffffff">Statusbook</text>
+  <text x="142" y="170" font-family="Segoe UI Variable, Segoe UI, Helvetica, Arial, sans-serif" font-size="24" fill="#ffffff" fill-opacity=".9">Travel releases for your WhatsApp Status</text>
+</svg>
