@@ -8,6 +8,36 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Start splash: the logo assembles itself, then the app fades in (see splash.js). -->
+  <div id="splash" aria-hidden="true">
+    <div class="splash-inner">
+      <svg class="splash-logo" viewBox="0 0 96 96" aria-hidden="true">
+        <circle class="sp-ring" cx="48" cy="48" r="44"/>
+        <circle class="sp-sun" cx="67" cy="34" r="8.5"/>
+        <path class="sp-book" d="M48 73.6C38 67.8 28 67.8 19 72"/>
+        <path class="sp-book" d="M48 73.6C58 67.8 68 67.8 77 72"/>
+        <path class="sp-spine" d="M48 73.6v7"/>
+        <path class="sp-trunk" d="M41 34C43 44 47 56 46.5 71L53 71C53 56 48 43 45.6 34Z"/>
+        <path class="sp-frond" style="--i:0" d="M43 33L41.5 31.7L39.9 30.6L38.3 29.6L36.7 28.8L34.9 28.2L33.2 27.8L31.4 27.6L29.6 27.6L27.8 27.8L26 28.2L24.4 28.8L22.7 29.6L21.1 30.6L19.6 31.6L18.2 32.9L16.8 34.2L15.5 35.7L14 37.1L12.5 38.5L11 40L11 40L12.5 38.5L14 37.1L15.8 36.1L17.4 35L19.9 36.1L20.7 33.7L23.5 36.6L23.9 32.8L26.5 37.4L27 32.3L29 37.8L29.9 32L31.2 37.6L32.8 31.9L33.7 36.7L35.9 32L36.8 35.3L39.3 32.3L40.8 33.7L43 33Z"/>
+        <path class="sp-frond" style="--i:1" d="M43 33L41.9 31L40.7 29.1L39.5 27.3L38.2 25.6L36.8 24.1L35.4 22.7L33.9 21.5L32.3 20.5L30.6 19.7L29 19L27.3 18.5L25.6 18.1L23.9 17.9L22.3 17.9L20.7 17.9L19.1 18L17.6 17.9L16 18L16 18L17.6 17.9L19.1 18L20.6 18.9L22.1 18.9L23.1 21.8L24.8 20.3L25.2 24.6L27.5 22L27.2 27.1L30.2 23.8L29.6 29L33.1 25.7L32.5 30.4L36.1 27.8L36.2 31.5L39.5 30.2L40.6 32.4L43 33Z"/>
+        <path class="sp-frond" style="--i:2" d="M43 33L42.7 29.7L42.4 26.7L41.9 23.8L41.4 21.2L40.8 18.8L40.1 16.6L39.3 14.7L38.4 13.1L37.4 11.6L36.4 10.5L35.4 9.6L34.5 9L33.7 8.4L33 8L33 8L33.7 8.4L34.4 9L34.3 10.8L35.3 11.2L34.1 14.1L36.2 14.1L34.3 17.7L37.3 17.6L35.4 21.6L38.8 22L37.7 25.8L40.8 27.1L41.1 30.4L43 33Z"/>
+        <path class="sp-frond" style="--i:3" d="M43 33L44.7 29.9L46.4 27.1L47.9 24.5L49.4 22.2L50.7 20.1L51.9 18.3L53 16.7L53.9 15.3L54.8 14.2L55.7 13.2L56.7 12.3L57.7 11.8L58.9 11.7L60 12L60 12L58.9 11.7L57.7 11.6L56.1 11.1L55 11.8L52.2 11.6L52 13.4L48.3 14.1L49.2 16.5L45.3 18.1L46.7 20.8L43.6 23.3L44.7 26.3L43 29.5L43 33Z"/>
+        <path class="sp-frond" style="--i:4" d="M43 33L45.4 31.5L47.7 30.2L49.8 29L51.9 27.9L53.9 27L55.8 26.1L57.5 25.3L59.2 24.6L60.8 24L62.3 23.5L63.8 23L65.2 22.6L66.7 22.3L68.2 22.2L69.7 22.2L71.2 22.5L72.6 23.2L74 24L74 24L72.6 23.2L71.2 22.5L70 21.6L68.4 21.1L67 19.6L65.2 20.3L63.1 18.5L61.6 20.2L58.8 18.5L57.8 21L54.5 19.9L54 22.8L50.5 22.5L50.3 25.4L47.1 26.1L46.6 28.9L44.3 30.5L43 33Z"/>
+        <path class="sp-frond" style="--i:5" d="M43 33L45.2 32.8L47.3 32.7L49.4 32.7L51.3 32.7L53.2 32.8L55 32.9L56.7 33.1L58.4 33.3L60.1 33.5L61.7 33.8L63.4 34.1L65 34.5L66.7 34.9L68.4 35.5L70.1 36.1L71.8 36.9L73.6 37.8L75.1 39L76.6 40.5L78 42L78 42L76.6 40.5L75.1 39L73.9 37.5L72.4 36.1L71.8 34.1L69.5 33.5L69.1 30.9L66.3 31.3L65.7 28.4L62.8 29.7L61.6 26.7L58.9 28.9L57.2 26.2L55 28.8L52.7 26.9L50.9 29.5L48.5 28.7L46.9 31L44.7 31.4L43 33Z"/>
+        <path class="sp-frond" style="--i:6" d="M43 33L44 33.7L44.9 34.4L45.8 35.2L46.6 36L47.5 36.9L48.5 37.8L49.6 38.9L50.8 40.1L51.9 41.5L53.1 43.1L54.2 44.9L55 47L55 47L54.2 44.9L53.4 42.9L53.6 40.9L52.1 39.2L53 37.2L50.5 36.2L51.2 34.1L48.2 34L48.1 32.3L45.6 32.9L44.5 32.3L43 33Z"/>
+        <circle class="sp-nut" style="--i:0" cx="41.5" cy="37.5" r="2.3"/>
+        <circle class="sp-nut" style="--i:1" cx="45.5" cy="37" r="2.1"/>
+        <circle class="sp-nut" style="--i:2" cx="43.6" cy="39.8" r="2"/>
+      </svg>
+      <div class="splash-name">Statusbook</div>
+      <div class="splash-tag">Travel releases for your WhatsApp Status</div>
+    </div>
+    <svg class="splash-waves" viewBox="0 0 2400 120" preserveAspectRatio="none">
+      <path class="sw1" d="M0 40 C 140 22 260 58 420 44 S 700 18 860 36 S 1080 62 1200 40 C 1340 22 1460 58 1620 44 S 1900 18 2060 36 S 2280 62 2400 40 V120 H0Z"/>
+      <path class="sw2" d="M0 62 C 160 48 300 80 480 64 S 760 44 940 60 S 1110 78 1200 62 C 1360 48 1500 80 1680 64 S 1960 44 2140 60 S 2310 78 2400 62 V120 H0Z"/>
+      <path class="sw3" d="M0 86 C 120 76 280 100 440 90 S 720 72 900 88 S 1100 98 1200 86 C 1320 76 1480 100 1640 90 S 1920 72 2100 88 S 2300 98 2400 86 V120 H0Z"/>
+    </svg>
+  </div>
   <!-- The shoreline: lagoon water under the journey's name and its steps, washing onto the limestone. -->
   <header id="shore">
     <svg class="waves" viewBox="0 0 2400 120" preserveAspectRatio="none" aria-hidden="true">
@@ -228,6 +258,7 @@
   </dialog>
 
   <div id="toast"></div>
+  <script src="splash.js"></script>
   <script src="icons.js"></script>
   <script src="app.js"></script>
   <script src="posts.js"></script>

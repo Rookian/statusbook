@@ -425,3 +425,53 @@ dialog ol.steps { padding-left: 20px; margin: 8px 0; display: flex; flex-directi
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- start splash: the logo assembles itself ---------- */
+#splash {
+  position: fixed; inset: 0; z-index: 200;
+  display: grid; place-items: center;
+  overflow: hidden;
+  background: radial-gradient(70% 60% at 50% 40%, rgba(255, 255, 255, .16), transparent 70%),
+              linear-gradient(135deg, #0e8fa0 0%, #19b3ad 40%, #2f9f7a 75%, #2d7f55 100%);
+  color: #fff;
+  transition: opacity .6s ease, transform .6s ease;
+}
+#splash.hide { opacity: 0; transform: scale(1.03); pointer-events: none; }
+.splash-inner { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: -6vh; }
+.splash-logo { width: 180px; height: 180px; overflow: visible; filter: drop-shadow(0 8px 24px rgba(0, 40, 40, .25)); }
+.splash-logo * { transform-box: view-box; }
+/* the ring draws itself */
+.sp-ring { fill: none; stroke: #fff; stroke-width: 4.5; stroke-dasharray: 277; stroke-dashoffset: 277; transform: rotate(-90deg); transform-origin: 48px 48px;
+  animation: sp-draw .95s cubic-bezier(.6, .1, .3, 1) .1s forwards; }
+/* the sun rises */
+.sp-sun { fill: #fff; opacity: 0; transform: translateY(14px); animation: sp-rise 1s ease-out .35s forwards; }
+/* the book opens: both pages draw out from the spine */
+.sp-book { fill: none; stroke: #fff; stroke-width: 4.5; stroke-linecap: round; stroke-dasharray: 36; stroke-dashoffset: 36; animation: sp-draw .6s ease-out .55s forwards; }
+.sp-spine { fill: none; stroke: #fff; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 8; stroke-dashoffset: 8; animation: sp-draw .25s ease-out 1s forwards; }
+/* the trunk grows up out of the book */
+.sp-trunk { fill: #fff; transform: scaleY(0); transform-origin: 49px 71px; animation: sp-grow .5s cubic-bezier(.3, .8, .4, 1) .95s forwards; }
+/* the fronds unfold one after another from the crown, with a little spring */
+.sp-frond { fill: #fff; opacity: 0; transform: scale(.15) rotate(-25deg); transform-origin: 43px 33px;
+  animation: sp-unfold .6s cubic-bezier(.3, 1.5, .5, 1) calc(1.3s + var(--i) * .07s) forwards; }
+/* the coconuts pop in */
+.sp-nut { fill: #fff; opacity: 0; transform: scale(0); transform-origin: 43.5px 38px; animation: sp-pop .35s cubic-bezier(.3, 1.8, .5, 1) calc(1.85s + var(--i) * .07s) forwards; }
+.splash-name { font-size: 40px; font-weight: 700; letter-spacing: -.01em; opacity: 0; transform: translateY(10px); animation: sp-in .6s ease-out 1.6s forwards; text-shadow: 0 2px 14px rgba(0, 40, 40, .3); }
+.splash-tag { font-size: 15px; color: rgba(255, 255, 255, .88); opacity: 0; transform: translateY(8px); animation: sp-in .6s ease-out 1.85s forwards; }
+/* waves rolling in at the bottom, onto the limestone of the app */
+.splash-waves { position: absolute; left: 0; bottom: -1px; width: 200%; height: 90px; }
+.splash-waves .sw1 { fill: rgba(255, 255, 255, .14); animation: roll 20s linear infinite; }
+.splash-waves .sw2 { fill: rgba(190, 240, 225, .25); animation: roll 26s linear infinite reverse; }
+.splash-waves .sw3 { fill: var(--stone); animation: roll 32s linear infinite; }
+@keyframes sp-draw { to { stroke-dashoffset: 0; } }
+@keyframes sp-rise { to { opacity: .5; transform: translateY(0); } }
+@keyframes sp-grow { to { transform: scaleY(1); } }
+@keyframes sp-unfold { to { opacity: 1; transform: scale(1) rotate(0); } }
+@keyframes sp-pop { to { opacity: 1; transform: scale(1); } }
+@keyframes sp-in { to { opacity: 1; transform: translateY(0); } }
+/* with "reduce animations": the finished logo, no movement */
+@media (prefers-reduced-motion: reduce) {
+  .sp-ring, .sp-book, .sp-spine { stroke-dashoffset: 0; }
+  .sp-sun { opacity: .5; transform: none; }
+  .sp-trunk, .sp-frond, .sp-nut { opacity: 1; transform: none; }
+  .splash-name, .splash-tag { opacity: 1; transform: none; }
+}
