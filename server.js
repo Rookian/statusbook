@@ -1224,13 +1224,27 @@ const routes = {
     await publisher.open(path.join(APP_DIR, 'whatsapp-profile'));
     return { login: await publisher.loginState() };
   },
+  // Development aid: reads WhatsApp Web's text status editor without sending.
+  'POST /api/publish/inspect-text': async () => {
+    if (publishJob && publishJob.running) throw Object.assign(new Error('A part is being published'), { code: 409 });
+    return publisher.inspectTextStatus();
+  },
+  // Development aid: a text post up to Send, never sent.
+  'POST /api/publish/try-text': async body => {
+    if (publishJob && publishJob.running) throw Object.assign(new Error('A part is being published'), { code: 409 });
+    return publisher.tryTextStatus(String(body.text || ''), body.bg || null);
+  },
   // Posts the not-yet-sent files of one part, in order, ticking each as sent.
   'POST /api/publish/start': async body => {
     if (!currentFolder) throw Object.assign(new Error('No folder is open'), { code: 400 });
     if (publishJob && publishJob.running) throw Object.assign(new Error('A part is being published already'), { code: 409 });
     const dir = releaseDir(body.release, body.part);
     const m = JSON.parse(await fsp.readFile(path.join(dir, RELEASE_FILE), 'utf8'));
-    const items = m.items.filter(i => !i.sentAt).map(i => ({ file: i.file, caption: i.caption || '', key: i.key }));
+    const items = m.items.filter(i => !i.sentAt).map(i => ({
+      file: i.file, caption: i.caption || '', key: i.key,
+      // Text posts go out as WhatsApp text status (publisher.js), not as their picture.
+      type: i.type, intro: !!i.intro, text: i.text, bg: i.bg,
+    }));
     if (!items.length) throw Object.assign(new Error('Everything in this part is sent already'), { code: 400 });
     if ((await publisher.loginState()) !== 'ready') throw Object.assign(new Error('Sign in to WhatsApp Web first'), { code: 409 });
     // dryRun (testing): every step except Send, nothing is ticked; optional limit of posts.

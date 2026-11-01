@@ -990,6 +990,14 @@ function renderEditor() {
     if (postLen(e) > STATUS_LIMIT_S) info.push(`⚠ Longer than ${STATUS_LIMIT_S} s: WhatsApp Status only shows the first ${STATUS_LIMIT_S} s.`);
   }
   if (e.type === 'image') info.push(`Photo ${e.source}.`);
+  if (isText && !isIntro) {
+    // Sent as WhatsApp's own text status (publisher.js), not as the picture shown here.
+    const full = [v.text, v.caption].map(t => (t || '').trim()).filter(Boolean).join('\n\n');
+    const n = splitStatusText(full).length;
+    info.push(`Goes out as a WhatsApp text status (WhatsApp's background color closest to this one), not as a picture: ` +
+      `${full.length} characters` + (n > 1 ? `, split into ${n} statuses of at most ${STATUS_TEXT_MAX} characters.` : '.') +
+      (v.caption.trim() ? ' The caption is added as the last paragraph.' : ''));
+  }
   if (e.removed) info.push("Removed: it won't go into the release. The pick stays in Pick.");
   $('#pInfo').textContent = info.join(' ');
   if (e.type !== 'text') renderGeo(e);
