@@ -42,7 +42,7 @@ How a release comes together:
 
 1. **Releases → ＋ New release** starts the draft, e.g. "Release 2". There is one draft at
    a time; Pick and Arrange work on it.
-2. **Pick:** **F** picks a photo, **I / O** mark a scene in a video; every picked photo
+2. **Pick:** **F** picks a photo or a whole video, **I / O** mark a scene in a video; every picked photo
    and every scene is a post of the draft.
 3. **Arrange:** write captions, add text posts and day intros, put the posts in order.
 4. **Create release ▶** (in Arrange, or on the draft in Releases) makes the files. The
@@ -119,8 +119,9 @@ phone format (9:16) as it will look on the Status.
   key (see below) with the **Maps Static API** turned on; each map is fetched once and
   kept in `maps\` next to the app.
   The intro's caption automatically gets a **Google Maps link** (the image itself
-  can't hold a link): a pin for a day with one place, otherwise the day's area,
-  zoomed so all spots fit on a phone screen.
+  can't hold a link): a pin for a day with one place; for several places the own
+  [day map](map/README.md) with every pin of the day, numbered in time order (without
+  `mapPageUrl` in `settings.json`: the day's area in Google Maps, without pins).
   Days without any location in the files: the intro asks **Where were you?**. Type a
   place (e.g. `Nusa Penida`) to get a pin and the name under the date, or click
   **Leave out location** to show just the date.

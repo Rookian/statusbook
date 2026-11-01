@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tageskarte</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; background: #12324a; }
+  header { color: #fff; padding: 12px 16px calc(10px) 16px; padding-top: max(12px, env(safe-area-inset-top)); }
+  header h1 { margin: 0; font-size: 20px; font-weight: 650; }
+  header p { margin: 2px 0 0; font-size: 13px; opacity: .75; }
+  #map { flex: 1; }
+  .pin { width: 26px; height: 26px; border-radius: 50%; background: #e2463b; color: #fff; border: 2px solid #fff;
+         box-shadow: 0 1px 4px rgba(0,0,0,.4); font: 600 12px/22px system-ui, sans-serif; text-align: center; box-sizing: border-box; }
+  .leaflet-popup-content { font-size: 14px; }
+  .leaflet-popup-content a { display: inline-block; margin-top: 4px; }
+  .empty { color: #fff; padding: 24px 16px; }
+</style>
+</head>
+<body>
+<header><h1 id="title">Tageskarte</h1><p id="sub"></p></header>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// The link carries everything: #t=<title>&p=<pins>. Pins are encoded like Google's
+// polyline format (lat/lon × 1e5, delta, zigzag, 5-bit chunks) but with the URL-safe
+// alphabet A–Z a–z 0–9 - _, so the link survives WhatsApp untouched. Nothing is stored.
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+function decodePins(s) {
+  const out = []; let i = 0, lat = 0, lon = 0;
+  const next = () => {
+    let result = 0, shift = 0, b;
+    do {
+      b = ALPHABET.indexOf(s[i++]);
+      if (b < 0) throw new Error('bad pin data');
+      result |= (b & 31) << shift; shift += 5;
+    } while (b >= 32);
+    return result & 1 ? ~(result >> 1) : result >> 1;
+  };
+  while (i < s.length) { lat += next(); lon += next(); out.push([lat / 1e5, lon / 1e5]); }
+  return out;
+}
+const params = new URLSearchParams(location.hash.slice(1));
+const title = params.get('t') || 'Tageskarte';
+document.title = title;
+document.getElementById('title').textContent = title;
+let pins = [];
+try { pins = decodePins(params.get('p') || ''); } catch { pins = []; }
+if (!pins.length) {
+  document.getElementById('map').outerHTML = '<div class="empty">Keine Orte in diesem Link.</div>';
+} else {
+  document.getElementById('sub').textContent = pins.length === 1 ? '1 Ort' : `${pins.length} Orte, nummeriert in zeitlicher Reihenfolge`;
+  const map = L.map('map', { zoomControl: true });
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
+  pins.forEach(([lat, lon], n) => {
+    const icon = L.divIcon({ className: '', html: `<div class="pin">${n + 1}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+    L.marker([lat, lon], { icon }).addTo(map).bindPopup(
+      `Ort ${n + 1}<br><a href="https://www.google.com/maps/search/?api=1&query=${lat},${lon}" target="_blank" rel="noopener">In Google Maps öffnen</a>`);
+  });
+  if (pins.length === 1) map.setView(pins[0], 15);
+  else map.fitBounds(pins, { padding: [36, 36], maxZoom: 16 });
+}
+</script>
+</body>
+</html>

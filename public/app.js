@@ -348,6 +348,7 @@ function renderViewer() {
     v.addEventListener('timeupdate', updateTimeline);
     v.addEventListener('loadedmetadata', renderScenes);
     v.addEventListener('play', tick);
+    releaseControlsFocus(v);
     stage.append(v);
     $('#videoPanel').hidden = false;
     renderScenes();
@@ -380,6 +381,7 @@ function offerPreview(it) {
       v.addEventListener('timeupdate', updateTimeline);
       v.addEventListener('loadedmetadata', () => { stage.replaceChildren(v); renderScenes(); });
       v.addEventListener('play', tick);
+      releaseControlsFocus(v);
       v.addEventListener('error', () => {
         stage.replaceChildren(el('div', { class: 'msg' }, 'Sorry, this video could not be opened.'));
       }, { once: true });
@@ -391,6 +393,14 @@ function offerPreview(it) {
 }
 
 const video = () => $('#stage video');
+
+// Chromium's own video controls (play button, time bar) keep the keyboard focus after a
+// click and swallow keys, so I / O / F / Space did nothing. Hand the focus back to the
+// page after every click and every play, pause or seek.
+function releaseControlsFocus(v) {
+  const release = () => setTimeout(() => { if (document.activeElement === v) v.blur(); }, 0);
+  for (const type of ['pointerup', 'play', 'pause', 'seeked']) v.addEventListener(type, release);
+}
 
 function tick() {
   updateTimeline();
@@ -435,7 +445,7 @@ function renderScenes() {
     const len = sc.end - sc.start;
     list.append(el('li', { onclick: () => seek(sc.start, true) },
       el('span', { class: 'dot' }),
-      `Scene ${i + 1}   ${fmtTime(sc.start)} → ${fmtTime(sc.end)}`,
+      isWholeScene(sc, dur) ? `Whole video   ${fmtTime(sc.start)} → ${fmtTime(sc.end)}` : `Scene ${i + 1}   ${fmtTime(sc.start)} → ${fmtTime(sc.end)}`,
       el('span', { class: 'len' }, `${len.toFixed(1)} s`),
       len > STATUS_LIMIT_S ? el('span', { class: 'warn', title: `WhatsApp Status only shows the first ${STATUS_LIMIT_S} s (chats are fine)` }, `⚠ over ${STATUS_LIMIT_S} s`) : null,
       el('button', {
@@ -462,7 +472,7 @@ function seek(t, play = false) {
 async function toggleFavorite() {
   const it = current();
   if (!it) return;
-  if (it.type !== 'image') { toast('For videos, mark scenes with I and O'); return; }
+  if (it.type === 'video') { await toggleWholeVideo(it); return; }
   const why = pickBlocked(it);
   if (why) { toast(why); return; }
   it.favorite = !it.favorite;
@@ -476,6 +486,32 @@ async function toggleFavorite() {
     picksChanged();
     toast('Could not save: ' + err.message);
   }
+}
+
+// A video picked as a whole is one scene from start to end, so it goes through the
+// same path as any scene (release, splitting into 90 s pieces, locking).
+const isWholeScene = (sc, dur) => sc.start <= 0.05 && dur && sc.end >= dur - 0.1;
+
+async function toggleWholeVideo(it) {
+  const why = pickBlocked(it);
+  if (why) { toast(why); return; }
+  const v = video();
+  const dur = (v && v.duration) || it.duration || 0;
+  if (!dur) { toast('The video length is not known yet, try again in a moment'); return; }
+  if (it.scenes.length === 1 && isWholeScene(it.scenes[0], dur)) {
+    await saveScenes(it, []);
+    toast('Whole video unpicked');
+    return;
+  }
+  if (it.scenes.length) {
+    toast(`This video has ${it.scenes.length} scene${it.scenes.length === 1 ? '' : 's'}; delete ${it.scenes.length === 1 ? 'it' : 'them'} (✕) to pick the whole video`);
+    return;
+  }
+  state.pendingStart = null;
+  await saveScenes(it, [{ start: 0, end: Math.round(dur * 1000) / 1000 }]);
+  toast(dur > STATUS_LIMIT_S
+    ? `Whole video picked (${fmtTime(dur)}); it will be split into pieces of ${STATUS_LIMIT_S} s`
+    : 'Whole video picked');
 }
 
 function markIn() {
@@ -681,6 +717,7 @@ function onKey(e) {
 
 function init() {
   setInterval(checkFolder, 3000);
+  $('#wholeVideo').addEventListener('click', () => { const it = current(); if (it && it.type === 'video') toggleWholeVideo(it); });
   $('#markIn').addEventListener('click', markIn);
   $('#markOut').addEventListener('click', markOut);
   $('#timeline').addEventListener('click', e => {
@@ -707,7 +744,10 @@ function init() {
   });
 
   loadItems().catch(err => toast(err.message));
-  api('/api/state').then(s => { if (!s.ffmpeg) toast('ffmpeg not found: scenes cannot be exported'); }).catch(() => {});
+  api('/api/state').then(s => {
+    state.mapPageUrl = s.mapPageUrl || null;
+    if (!s.ffmpeg) toast('ffmpeg not found: scenes cannot be exported');
+  }).catch(() => {});
 }
 
 init();

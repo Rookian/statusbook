@@ -970,6 +970,8 @@ const routes = {
     journey: currentJourney ? loadJourneys().find(j => j.id === currentJourney) || null : null,
     ffmpeg: !!tool('ffmpeg'),
     exportDirName: EXPORT_DIR_NAME,
+    // The own map page for day intro links with several pins (see docs/map/README.md).
+    mapPageUrl: loadSettings().mapPageUrl || null,
   }),
   // Asked every few seconds by the page: goes up when files in the folder change.
   'GET /api/folder-version': async () => ({ folder: currentFolder, version: folderVersion }),

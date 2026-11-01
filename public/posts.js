@@ -337,7 +337,8 @@ function dayPins(day) {
 // ones), with spots closer than about 10 m merged into one pin.
 function autoDayPins(day) {
   const seen = new Set(), pins = [];
-  for (const it of state.items) {
+  const byTime = state.items.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  for (const it of byTime) {
     if (!it.geo || !(it.date || '').startsWith(day)) continue;
     const k = `${it.geo.lat.toFixed(4)},${it.geo.lon.toFixed(4)}`;
     if (seen.has(k)) continue;
@@ -404,15 +405,40 @@ function drawDayMap(ctx, day, scale) {
   ctx.restore();
 }
 
-// Google Maps link for a day intro's caption (the intro itself is an image, so its
-// link has to be in the caption). One place: a link with exactly that pin. Several:
-// a link to the day's area, zoomed so all spots fit on a phone screen. A plain link
-// can't carry many pins, and route links take at most 5 points on phones.
+// Pins for the own map page's link: Google's polyline encoding (lat/lon × 1e5, delta,
+// zigzag, 5-bit chunks) with the URL-safe alphabet, so WhatsApp keeps the link whole.
+// docs/map/index.html (the page on GitHub Pages) decodes it.
+const PIN_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+function encodePins(pins) {
+  let out = '', lat = 0, lon = 0;
+  const put = d => {
+    let v = d < 0 ? ~(d << 1) : d << 1;
+    while (v >= 32) { out += PIN_ALPHABET[(v & 31) | 32]; v >>>= 5; }
+    out += PIN_ALPHABET[v];
+  };
+  for (const p of pins) {
+    const a = Math.round(p.lat * 1e5), o = Math.round(p.lon * 1e5);
+    put(a - lat); put(o - lon);
+    lat = a; lon = o;
+  }
+  return out;
+}
+
+// Map link for a day intro's caption (the intro itself is an image, so its link has to
+// be in the caption). One place: a Google Maps link with exactly that pin. Several:
+// with "mapPageUrl" in settings.json, the own map page with every pin of the day,
+// numbered in time order; without it, Google Maps on the day's area (a plain Google
+// link can't carry many pins).
 function dayMapLink(day) {
   const pins = dayPins(day);
   if (!pins.length) return null;
   const f = n => n.toFixed(5).replace(/0+$/, '').replace(/\.$/, '');
   if (pins.length === 1) return `https://www.google.com/maps/search/?api=1&query=${f(pins[0].lat)},${f(pins[0].lon)}`;
+  if (state.mapPageUrl) {
+    const t = introFor(day);
+    const title = [germanDay(day), t && t.place && t.place.label].filter(Boolean).join(' · ');
+    return `${state.mapPageUrl.replace(/#.*$/, '')}#t=${encodeURIComponent(title)}&p=${encodePins(pins)}`;
+  }
   const lats = pins.map(p => p.lat), lons = pins.map(p => p.lon);
   const [s, n, w, e] = [Math.min(...lats), Math.max(...lats), Math.min(...lons), Math.max(...lons)];
   // Web Mercator: the largest zoom at which the spots fit into ~360×640 px (portrait phone).
@@ -1117,7 +1143,7 @@ function renderIntroInfo(e) {
   const status = [
     s.error ? el('div', { class: 'warnline' }, s.error) : null,
     s.loading ? el('div', { class: 'muted' }, 'Loading the map from Google Maps …') : null,
-    link ? el('small', { class: 'muted' }, `🗺 Added to the caption automatically (${dayPins(day).length === 1 ? 'pin' : 'area of the day'}): `,
+    link ? el('small', { class: 'muted' }, `🗺 Added to the caption automatically (${dayPins(day).length === 1 ? 'pin' : state.mapPageUrl ? 'all pins, own map page' : 'area of the day'}): `,
       el('a', { href: link, target: '_blank', rel: 'noopener' }, 'open map link ↗')) : null,
   ];
   if (auto.length) {
@@ -1593,6 +1619,18 @@ function emptyIntros(items) {
   return items.filter((it, i) => isIntroItem(it) && (!items[i + 1] || isIntroItem(items[i + 1])));
 }
 
+// The day a part begins in, or null when it begins with a day intro. Text posts in
+// front of it don't count: they take their day from the post before them, which for a
+// text at the very beginning of a release is a post of an earlier release (so a text
+// put first would otherwise open the part with "Fortsetzung" of a long-gone day).
+function partStartDay(items, i) {
+  for (let j = i; j < items.length; j++) {
+    if (isIntroItem(items[j])) return null;
+    if (items[j].e.kind === 'media') return itemDay(items[j]) || null;
+  }
+  return null;
+}
+
 // More files than WhatsApp takes at once: split into parts that belong together.
 // Every part starts with a day intro (an automatic one when the part begins in the
 // middle of a day) and no part ends with one.
@@ -1604,7 +1642,8 @@ function releaseParts(allItems) {
   let i = 0;
   while (i < items.length) {
     const part = [];
-    if (!isIntroItem(items[i]) && itemDay(items[i])) part.push(autoIntroItem(itemDay(items[i])));
+    const day = partStartDay(items, i);
+    if (day) part.push(autoIntroItem(day));
     while (i < items.length && part.length < max) part.push(items[i++]);
     // An intro at the end goes to the next part, together with its day.
     while (part.length > 1 && i < items.length && isIntroItem(part[part.length - 1])) {
