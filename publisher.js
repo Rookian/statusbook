@@ -96,7 +96,8 @@ async function postOne(file, caption, dryRun) {
   await clearDialogs();
   await page.getByRole('button', { name: 'Status', exact: true }).click();
   await clearDialogs();
-  await page.getByRole('button', { name: 'Add Status' }).click();
+  // Exact name: the "My status" header row also mentions "Add status" in its name.
+  await page.getByRole('button', { name: /^add status$/i }).click();
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser', { timeout: 15000 }),
     page.getByRole('menuitem', { name: 'Photos & videos' }).click(),
