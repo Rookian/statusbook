@@ -475,3 +475,15 @@ dialog ol.steps { padding-left: 20px; margin: 8px 0; display: flex; flex-directi
   .sp-trunk, .sp-frond, .sp-nut { opacity: 1; transform: none; }
   .splash-name, .splash-tag { opacity: 1; transform: none; }
 }
+
+/* Spelling check before publishing */
+#spellDlg { width: min(640px, 94vw); }
+#spellList { list-style: none; padding: 0; margin: 8px 0; max-height: 58vh; overflow-y: auto; }
+#spellList li { padding: 10px 2px; border-top: 1px solid var(--line); }
+#spellList li.done { padding: 6px 2px; }
+#spellList .where { font-size: 12px; }
+#spellList .ctx { margin: 4px 0; line-height: 1.45; }
+#spellList mark { background: #f6ddd6; color: var(--danger); border-radius: 4px; padding: 0 2px; }
+#spellList .msg { font-size: 13px; color: var(--muted); }
+#spellList .fixes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.spellnote { font-size: 12px; margin: 8px 0 0; }

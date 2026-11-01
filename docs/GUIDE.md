@@ -210,6 +210,14 @@ that button on their card). A file marked as not sent goes out with the next Pub
 its part. Double-click a card in a release to see the released
 file itself.
 
+Before a part goes out, **Publish** checks the spelling of what it still sends: the
+captions and the text of text posts, in German, with the free
+[LanguageTool](https://languagetool.org) service (spelling, grammar, capitalization;
+not typography like `"…"` or quotes). Possible mistakes are listed with suggestions:
+a click on one changes the post, **Ignore** leaves it. **Publish** then goes on (changed
+posts are updated in the release first), **Cancel** stops without posting. Without an
+internet connection to LanguageTool you can publish without the check.
+
 - **Sent posts** can't be changed any more (the editor is locked).
 - **Posts in a part that isn't sent yet** keep their place, but you can still change
   them. A changed caption, text, color, format or day-intro place marks the card

@@ -1946,7 +1946,104 @@ function watchPublish() {
   }, 2000);
 }
 
+// ---------- spelling check before publishing ----------
+
+// What a part still sends that someone wrote: captions, and the text of text posts.
+// The release files may be older; what counts is the post as it is now (changed posts
+// are updated in the release before publishing).
+function spellFields(p) {
+  const out = [], seen = new Set();
+  for (const item of p.items) {
+    if (item.sentAt) continue;
+    const key = item.postKey || item.key;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const e = entryFor(key);
+    if (!e) continue;
+    const v = postView(e);
+    if (v.caption.trim()) out.push({ e, n: item.n, field: 'caption', text: v.caption });
+    if (e.type === 'text' && !e.cfg.intro && v.text.trim()) out.push({ e, n: item.n, field: 'text', text: v.text });
+  }
+  return out;
+}
+
+// Resolves true to go on publishing, false to stop.
+async function spellcheckBeforePublish(p) {
+  const fields = spellFields(p);
+  if (!fields.length) return true;
+  toast('Checking spelling …');
+  let results;
+  try {
+    ({ results } = await api('/api/spellcheck', { texts: fields.map(f => f.text) }));
+  } catch (err) {
+    return confirm(`The spelling check did not work: ${err.message}.\n\nPublish without it?`);
+  }
+  const issues = [];
+  fields.forEach((f, i) => (results[i] || []).forEach(m =>
+    issues.push({ ...m, f, at: m.offset, orig: f.text.substr(m.offset, m.length) })));
+  if (!issues.length) { toast('✓ Spelling check: nothing found'); return true; }
+  return new Promise(resolve => showSpellDialog(issues, resolve));
+}
+
+// Replaces the marked words in the post itself; later marks in the same text move along.
+function applySpellFix(issue, value, issues) {
+  const cfg = cfgFor(issue.f.e);
+  const cur = cfg[issue.f.field] || '';
+  if (cur.substr(issue.offset, issue.length) !== issue.orig) { toast('That text was changed in the meantime'); return false; }
+  cfg[issue.f.field] = cur.slice(0, issue.offset) + value + cur.slice(issue.offset + issue.length);
+  const delta = value.length - issue.length;
+  for (const o of issues) {
+    if (o !== issue && o.f.e === issue.f.e && o.f.field === issue.f.field && o.offset > issue.offset) o.offset += delta;
+  }
+  savePosts();
+  return true;
+}
+
+function showSpellDialog(issues, resolve) {
+  const dlg = $('#spellDlg'), list = $('#spellList');
+  let open = issues.length, changed = false;
+  const count = () => {
+    $('#spellCount').textContent = open
+      ? `${open} possible mistake${open === 1 ? '' : 's'} in the posts that go out:`
+      : '✓ All checked.';
+  };
+  list.replaceChildren();
+  for (const issue of issues) {
+    const t = issue.f.text, a = issue.at;
+    const row = el('li', {});
+    const done = label => {
+      row.classList.add('done');
+      row.replaceChildren(el('span', { class: 'muted' }, `#${pad2(issue.f.n)} · ${label}`));
+      open--;
+      count();
+    };
+    row.append(
+      el('div', { class: 'where muted' }, `#${pad2(issue.f.n)} · ${issue.f.field === 'text' ? 'text on the post' : 'caption'}`),
+      el('div', { class: 'ctx' }, (a > 50 ? '…' : '') + t.slice(Math.max(0, a - 50), a),
+        el('mark', {}, issue.orig || ' '), t.slice(a + issue.length, a + issue.length + 50) + (a + issue.length + 50 < t.length ? '…' : '')),
+      el('div', { class: 'msg' }, issue.message),
+      el('div', { class: 'fixes' },
+        ...issue.replacements.map(r => el('button', {
+          onclick: () => { if (applySpellFix(issue, r, issues)) { changed = true; done(`✓ „${issue.orig}" → „${r}"`); } },
+        }, r === '' ? '(remove)' : r)),
+        el('button', { class: 'quiet', onclick: () => done(`ignored: „${issue.orig}"`) }, 'Ignore')));
+    list.append(row);
+  }
+  count();
+  const finish = go => {
+    dlg.onclose = null;
+    dlg.close();
+    if (changed) { renderGallery({ reveal: false }); renderEditor(); }
+    resolve(go);
+  };
+  $('#spellGo').onclick = () => finish(true);
+  $('#spellCancel').onclick = () => finish(false);
+  dlg.onclose = () => finish(false);  // Esc
+  dlg.showModal();
+}
+
 async function publishPart(r, p) {
+  if (!(await spellcheckBeforePublish(p))) return;
   const unsent = p.items.filter(i => !i.sentAt).length;
   const changed = p.items.filter(i => releaseChanges(i));
   if (!confirm(`Publish ${p.part} of release ${releaseTitle(r.release)} to WhatsApp now?\n\n` +

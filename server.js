@@ -964,6 +964,51 @@ const journeyName = n => {
   return name;
 };
 
+// ---------- spelling ----------
+// LanguageTool's free public API checks German spelling, grammar and capitalization.
+// Only captions and the text of text posts are sent, which go to WhatsApp anyway.
+// Typography (quotes, "..." instead of "…", spaces) is left out: that's style, not a mistake.
+const SPELL_URL = 'https://api.languagetool.org/v2/check';
+const SPELL_SEP = '\n\n\n';
+
+// texts: strings; answers one list of { offset, length, message, replacements } per text.
+async function checkSpelling(texts) {
+  const joined = texts.join(SPELL_SEP);
+  if (joined.length > 20000) throw Object.assign(new Error('Too much text to check at once'), { code: 400 });
+  const out = texts.map(() => []);
+  if (!joined.trim()) return out;
+  let res;
+  try {
+    res = await fetch(SPELL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Statusbook/1.0 (personal photo tool)' },
+      body: new URLSearchParams({ text: joined, language: 'de-DE', disabledCategories: 'TYPOGRAPHY', disabledRules: 'WHITESPACE_RULE' }),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch {
+    throw new Error('No connection to LanguageTool');
+  }
+  if (res.status === 429) throw new Error('LanguageTool is busy (too many checks in a row); try again in a minute');
+  if (!res.ok) throw new Error(`LanguageTool answered ${res.status}`);
+  const data = await res.json();
+  // Map each match back to its text.
+  const starts = [];
+  let at = 0;
+  for (const t of texts) { starts.push(at); at += t.length + SPELL_SEP.length; }
+  for (const m of data.matches || []) {
+    let i = starts.length - 1;
+    while (i > 0 && starts[i] > m.offset) i--;
+    const offset = m.offset - starts[i];
+    if (offset < 0 || offset + m.length > texts[i].length) continue;
+    out[i].push({
+      offset, length: m.length, message: m.message || m.shortMessage || '',
+      replacements: (m.replacements || []).slice(0, 4).map(r => r.value),
+      rule: m.rule ? m.rule.id : '',
+    });
+  }
+  return out;
+}
+
 const routes = {
   'GET /api/state': async () => ({
     folder: currentFolder,
@@ -1095,6 +1140,10 @@ const routes = {
     return { saved: true };
   },
   // ----- releases -----
+  'POST /api/spellcheck': async body => {
+    const texts = Array.isArray(body.texts) ? body.texts.map(t => String(t || '')) : [];
+    return { results: await checkSpelling(texts) };
+  },
   'GET /api/releases': async () => ({ limits: releaseLimits(), releases: await listReleases() }),
   // Creates the folder of one part of a new release. An existing folder (a repeated
   // run of the same part) is reused; other releases are never touched.

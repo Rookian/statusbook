@@ -201,6 +201,19 @@
     </div>
   </dialog>
 
+  <!-- Spelling check before a part is published (posts.js). -->
+  <dialog id="spellDlg">
+    <h2>Spelling check</h2>
+    <p id="spellCount"></p>
+    <ul id="spellList"></ul>
+    <p class="muted spellnote">Checked by LanguageTool. Click a suggestion to change the post, or Ignore.
+      Changed posts are updated in the release before they are published.</p>
+    <div class="btns">
+      <button id="spellCancel">Cancel</button>
+      <button id="spellGo" class="primary">Publish</button>
+    </div>
+  </dialog>
+
   <!-- New journey, or the settings of one: a name and its one folder. -->
   <dialog id="journeyDlg">
     <h2 id="journeyDlgTitle">New journey</h2>
