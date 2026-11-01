@@ -61,8 +61,22 @@ if (!pins.length) {
     L.marker([lat, lon], { icon }).addTo(map).bindPopup(
       `Ort ${n + 1}<br><a href="https://www.google.com/maps/search/?api=1&query=${lat},${lon}" target="_blank" rel="noopener">In Google Maps öffnen</a>`);
   });
-  if (pins.length === 1) map.setView(pins[0], 15);
-  else map.fitBounds(pins, { padding: [36, 36], maxZoom: 16 });
+  // Fits all pins into view. Turning the phone (or any size change) would leave them
+  // outside it, so this runs again then, unless the person has moved or zoomed the map.
+  let fitting = false, touched = false, timer;
+  const fit = () => {
+    fitting = true;
+    map.invalidateSize();
+    if (pins.length === 1) map.setView(pins[0], 15, { animate: false });
+    else map.fitBounds(pins, { padding: [36, 36], maxZoom: 16, animate: false });
+    setTimeout(() => { fitting = false; }, 300);
+  };
+  map.on('dragstart zoomstart', () => { if (!fitting) touched = true; });
+  fit();
+  window.addEventListener('resize', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { if (touched) map.invalidateSize(); else fit(); }, 150);
+  });
 }
 </script>
 </body>
