@@ -77,7 +77,19 @@
       <aside id="list" tabindex="-1"></aside>
     </div>
     <section id="viewer">
-      <div id="stage"><div class="empty">Choose a journey to start.</div></div>
+      <div id="stageWrap">
+        <div id="stage"><div class="empty">Choose a journey to start.</div></div>
+        <!-- Over the picture: turn, pick, full screen; in full screen also previous / next. -->
+        <button id="navPrev" class="stagenav prev" title="Previous file (↑)">‹</button>
+        <button id="navNext" class="stagenav next" title="Next file (↓)">›</button>
+        <div id="stageTools">
+          <span id="focusName" class="focus-only"></span>
+          <button id="rotLeft" title="Turn 90° to the left (Shift+R)">⟲</button>
+          <button id="rotRight" title="Turn 90° to the right (R)">⟳</button>
+          <button id="pickBtn" title="Pick this photo (F)">☆ Pick</button>
+          <button id="focusBtn" title="Full screen (Enter) · Esc to leave">⛶</button>
+        </div>
+      </div>
       <div id="videoPanel" hidden>
         <div id="timeline" title="Click to jump">
           <div id="tlScenes"></div>
@@ -93,6 +105,7 @@
         </div>
         <ol id="sceneList"></ol>
       </div>
+      <div id="filmstrip" class="focus-only"></div>
       <div id="infoBar"></div>
     </section>
   </main>

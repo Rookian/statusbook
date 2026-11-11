@@ -41,6 +41,7 @@ const posts = {
   raf: 0,
   saveTimer: null,
   places: new Map(), // "lat,lon" -> place (or null while unknown)
+  nearby: new Map(), // "lat,lon" -> { sights, towns } around a spot (or null while unknown)
   dayMaps: new Map(), // map URL -> { img, error, loading } for day intros
   googleKey: false,  // whether a Google Maps key is saved (the key itself stays on the server)
 };
@@ -130,6 +131,7 @@ function releaseChanges(item, e = entryFor(item.postKey || item.key)) {
   } else if (item.format) {
     picture = item.format !== 'original';  // an old file with a blurred background
   }
+  if (e.kind === 'media' && (item.rotate || 0) !== rotOf(e.source)) picture = true; // turned since
   if (picture) out.push('picture');
   return out.length ? out : null;
 }
@@ -317,8 +319,34 @@ function drawBackground(ctx, post, media, scale) {
   if (!media) return;
   const [mw, mh] = mediaSize(media);
   if (!mw || !mh) return;
-  const f = Math.min(SW / mw, SH / mh);
-  ctx.drawImage(media, (SW - mw * f) / 2, (SH - mh * f) / 2, mw * f, mh * f);
+  // media.rot: the file's turn (R in Pick), set when it was loaded.
+  const rot = media.rot || 0, side = rot % 180 !== 0;
+  const f = side ? Math.min(SW / mh, SH / mw) : Math.min(SW / mw, SH / mh);
+  ctx.save();
+  ctx.translate(SW / 2, SH / 2);
+  ctx.rotate((rot * Math.PI) / 180);
+  ctx.drawImage(media, -mw * f / 2, -mh * f / 2, mw * f, mh * f);
+  ctx.restore();
+}
+
+// A photo drawn turned onto a new canvas, scaled by f.
+function turnedCanvas(img, rot, f = 1) {
+  const w = Math.round(img.naturalWidth * f), h = Math.round(img.naturalHeight * f);
+  const side = rot % 180 !== 0;
+  const c = document.createElement('canvas');
+  c.width = side ? h : w;
+  c.height = side ? w : h;
+  const ctx = c.getContext('2d');
+  ctx.translate(c.width / 2, c.height / 2);
+  ctx.rotate((rot * Math.PI) / 180);
+  ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  return c;
+}
+
+// Called by app.js after a file was turned: cards and the post preview follow.
+function onRotated(it) {
+  if (posts.media && curEntry() && curEntry().source === it.name) { posts.media.rot = it.rotate || 0; drawPostPreview(); }
+  if (typeof renderGallery === 'function' && inPostsView()) renderGallery({ reveal: false });
 }
 
 // ---------- day intro maps ----------
@@ -526,7 +554,7 @@ function renderPost(canvas, post, media, scale = 1, textOnly = false) {
 function loadImageEl(name) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => resolve(img);
+    img.onload = () => { img.rot = rotOf(name); resolve(img); };
     img.onerror = () => reject(new Error(`Could not load ${name}`));
     img.src = mediaUrl({ name });
   });
@@ -811,7 +839,7 @@ function renderCard(e, num, row = null) {
     frame.append(c);
   } else {
     const src = thumbUrl(e);
-    frame.append(el('img', { class: 'fg', src, loading: 'lazy', alt: '' }));
+    frame.append(el('img', { class: 'fg' + rotClass(rotOf(e.source)), src, loading: 'lazy', alt: '' }));
   }
   const piece = row && row.item.piece;
   if (e.type === 'video') {
@@ -1299,6 +1327,7 @@ function renderGeo(e) {
         el('b', {}, line),
         el('button', { onclick: () => appendTo('caption', line) }, '＋ Caption')));
     }
+    renderNearby(box, e, g, place);
     return;
   }
   const providerName = posts.googleKey ? 'Google Maps' : 'OpenStreetMap';
@@ -1307,8 +1336,13 @@ function renderGeo(e) {
     btn.disabled = true;
     btn.textContent = 'Looking up…';
     try {
-      const res = await api(`/api/place?lat=${g.lat}&lon=${g.lon}`);
+      // The nearby list comes along with the place name, so you can choose right away.
+      const [res, near] = await Promise.all([
+        api(`/api/place?lat=${g.lat}&lon=${g.lon}`),
+        api(`/api/nearby?lat=${g.lat}&lon=${g.lon}`).catch(err => { toast(err.message); return null; }),
+      ]);
       posts.places.set(key, res.place);
+      if (near && near.nearby) posts.nearby.set(key, near.nearby);
     } catch (err) {
       toast(err.message);
     }
@@ -1321,6 +1355,61 @@ function renderGeo(e) {
     api(`/api/place?lat=${g.lat}&lon=${g.lon}&cached=1`).then(res => {
       if (res.place) { posts.places.set(key, res.place); if (curEntry() === e) renderGeo(e); } else posts.places.delete(key);
     }).catch(() => posts.places.delete(key));
+  }
+}
+
+// A broader choice of names around the spot (towns, beaches, viewpoints, temples, …),
+// nearest first. Click one to add it to the caption.
+const NEARBY_ICON = { Beach: '🏖', Bay: '🏖', Lagoon: '🏖', Reef: '🐠', Viewpoint: '🌄', Peak: '⛰', Volcano: '🌋', Hill: '⛰', Crater: '🌋',
+  Cliffs: '🪨', Cape: '🪨', Waterfall: '💧', Spring: '💧', Lake: '💧', Temple: '🛕', 'Nature park': '🌿', Park: '🌳', Garden: '🌺',
+  'Hiking area': '🥾', 'Rice terraces': '🌾', Valley: '🌄', Island: '🏝', City: '🏙', Town: '🏘', Village: '🏡', District: '🏘',
+  Museum: '🏛', 'Historic site': '🏛', Harbour: '⚓' };
+const fmtDist = m => (m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`);
+
+function renderNearby(box, e, g, place) {
+  const key = geoKey(g);
+  const near = posts.nearby.get(key);
+  const town = place && place.name ? place.name.split(',')[0] : '';
+  const country = place && place.country ? `, ${place.country}` : '';
+  if (near) {
+    const chips = list => list.map(p => {
+      const line = ['Town', 'City', 'Village', 'District', 'Island'].includes(p.kind) || !town || p.name === town
+        ? `📍 ${p.name}${country}` : `📍 ${p.name}, ${town}${country}`;
+      return el('button', { class: 'nchip', title: `${p.kind} · ${fmtDist(p.dist)} away\nAdds "${line}" to the caption`,
+        onclick: () => { appendTo('caption', line); toast(`Added: ${line}`); } },
+      el('span', { class: 'nicon' }, NEARBY_ICON[p.kind] || '📍'), el('span', { class: 'nname' }, p.name),
+      el('small', {}, `${p.kind} · ${fmtDist(p.dist)}`));
+    });
+    const wrap = el('div', { class: 'nearby' });
+    if (near.sights.length) wrap.append(el('div', { class: 'nhead' }, 'Sights & landscapes nearby'), el('div', { class: 'nlist' }, ...chips(near.sights)));
+    if (near.towns.length) wrap.append(el('div', { class: 'nhead' }, 'Towns & islands around'), el('div', { class: 'nlist' }, ...chips(near.towns)));
+    if (!near.sights.length && !near.towns.length) wrap.append(el('small', { class: 'muted' }, 'Nothing named found around this spot.'));
+    else wrap.append(el('small', { class: 'muted' }, 'Click a place to add it to the caption.'));
+    box.append(wrap);
+    return;
+  }
+  const btn = el('button', { title: 'Lists towns, beaches, viewpoints, temples and other sights around this spot. Only the coordinates are sent.' },
+    '🔎 More places nearby …');
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Searching nearby …';
+    try {
+      posts.nearby.set(key, (await api(`/api/nearby?lat=${g.lat}&lon=${g.lon}`)).nearby);
+    } catch (err) {
+      toast(err.message);
+      btn.disabled = false;
+      btn.textContent = '🔎 More places nearby …';
+      return;
+    }
+    if (curEntry() === e) renderGeo(e);
+  });
+  box.append(btn);
+  // Spots searched before (places.json) show their list without going online.
+  if (!posts.nearby.has(key)) {
+    posts.nearby.set(key, null);
+    api(`/api/nearby?lat=${g.lat}&lon=${g.lon}&cached=1`).then(res => {
+      if (res.nearby) { posts.nearby.set(key, res.nearby); if (curEntry() === e) renderGeo(e); } else posts.nearby.delete(key);
+    }).catch(() => posts.nearby.delete(key));
   }
 }
 
@@ -1420,6 +1509,7 @@ async function loadPostMedia() {
     toast('Creating a preview of this video…');
     v.src = '/preview?name=' + encodeURIComponent(e.source);
   });
+  v.rot = rotOf(e.source);
   posts.media = v;
   v.src = mediaUrl({ name: e.source });
 }
@@ -1731,7 +1821,13 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
     const img = await loadImageEl(e.source);
     const ext = e.source.split('.').pop().toLowerCase();
     const big = Math.max(img.naturalWidth, img.naturalHeight);
-    if ((ext === 'jpg' || ext === 'jpeg') && big <= L.maxImageSide) {
+    const rot = rotOf(e.source);
+    if (rot) {
+      // Turned in Pick: drawn turned (and scaled down if needed) as a new JPEG.
+      const c = turnedCanvas(img, rot, Math.min(1, L.maxImageSide / big));
+      file += '.jpg';
+      await apiRetry('/api/posts/image', { ...where, file, data: c.toDataURL('image/jpeg', 0.92) });
+    } else if ((ext === 'jpg' || ext === 'jpeg') && big <= L.maxImageSide) {
       file += `.${ext}`;
       await apiRetry('/api/posts/copy', { ...where, file, source: e.source });
     } else {
@@ -1774,6 +1870,7 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
       auto: e.cfg.auto || undefined,
     } : undefined,
     format: e.type === 'text' ? undefined : 'original',
+    rotate: e.kind === 'media' && rotOf(e.source) ? rotOf(e.source) : undefined,
     taken: e.kind === 'media' ? addSeconds(e.time, it.start - e.start) || undefined : undefined,
     location: g ? {
       lat: g.lat, lon: g.lon, approxFrom: g.from || undefined,
@@ -2159,6 +2256,7 @@ function setMode(mode, force = false) {
   if (mode !== 'pick') {
     const v = video();
     if (v) v.pause();
+    toggleFocus(false);
   }
   if (mode === 'pick') { renderList(); renderPickBar(); }
   if (inPostsView()) {

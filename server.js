@@ -20,6 +20,7 @@ const SETTINGS_FILE = path.join(APP_DIR, 'settings.json');
 const PREVIEW_DIR = path.join(os.tmpdir(), 'media-picker-previews');
 const EXPORT_DIR_NAME = 'WhatsApp';
 const FAVORITES_FILE = '_favorites.json';
+const ROTATIONS_FILE = '_rotations.json'; // { rotations: { "name.jpg": 90 } }, clockwise degrees
 const CUTS_SUFFIX = '.cuts.json';
 const POSTS_FILE = '_posts.json';
 const FIRST_PORT = 4870;
@@ -304,6 +305,29 @@ async function setFavorite(folder, name, value) {
   else await writeJsonAtomic(file, { favorites: [...favs].sort() });
 }
 
+// Turned files: 90, 180 or 270 degrees clockwise. The originals stay untouched; the
+// page shows them turned and the release files (photos and video clips) are made turned.
+async function readRotations(folder) {
+  try {
+    const j = JSON.parse(await fsp.readFile(path.join(folder, ROTATIONS_FILE), 'utf8'));
+    const out = {};
+    for (const [k, v] of Object.entries(j.rotations || {})) if ([90, 180, 270].includes(v)) out[k] = v;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function setRotation(folder, name, deg) {
+  const rot = await readRotations(folder);
+  const d = ((Math.round(Number(deg) / 90) * 90) % 360 + 360) % 360;
+  if (d) rot[name] = d; else delete rot[name];
+  const file = path.join(folder, ROTATIONS_FILE);
+  if (!Object.keys(rot).length) await fsp.rm(file, { force: true });
+  else await writeJsonAtomic(file, { rotations: Object.fromEntries(Object.entries(rot).sort()) });
+  return d;
+}
+
 async function readScenes(videoFile) {
   try {
     const j = JSON.parse(await fsp.readFile(videoFile + CUTS_SUFFIX, 'utf8'));
@@ -340,6 +364,7 @@ async function pool(tasks, limit) {
 async function scanFolder(folder) {
   const entries = await fsp.readdir(folder, { withFileTypes: true });
   const favs = await readFavorites(folder);
+  const rots = await readRotations(folder);
   const items = [];
   const tasks = entries
     .filter(e => e.isFile() && mediaType(e.name))
@@ -349,6 +374,7 @@ async function scanFolder(folder) {
       try {
         const st = await fsp.stat(full);
         const item = { name: e.name, type, size: st.size, ...(await getMeta(full, type, st)) };
+        item.rotate = rots[e.name] || 0;
         if (type === 'image') item.favorite = favs.has(e.name);
         else item.scenes = await readScenes(full);
         items.push(item);
@@ -550,6 +576,153 @@ function lookupPlace(lat, lon) {
     return place;
   });
   placeQueue = job.catch(() => {});
+  return job;
+}
+
+// ---------- nearby places ----------
+// A broader choice of names for one spot: towns and villages, beaches, viewpoints,
+// waterfalls, peaks, temples and other sights around it, nearest first. Comes from
+// OpenStreetMap (Overpass, no key needed) and, with a saved key, Google Places too.
+// Only the coordinates are sent; results are kept in places.json ("n:" entries).
+
+const NEARBY_POI_RADIUS = 2500;   // m, for sights
+const NEARBY_TOWN_RADIUS = 12000; // m, for cities, towns, villages, islands
+const OVERPASS_URLS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+
+function distM(a, b) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// OSM tags -> a short kind shown next to the name. null = not interesting.
+function osmKind(t) {
+  const place = { city: 'City', town: 'Town', village: 'Village', island: 'Island', islet: 'Island', suburb: 'District' }[t.place];
+  if (place) return place;
+  const natural = { beach: 'Beach', peak: 'Peak', volcano: 'Volcano', bay: 'Bay', cape: 'Cape', cliff: 'Cliffs',
+    waterfall: 'Waterfall', spring: 'Spring', reef: 'Reef', valley: 'Valley', hill: 'Hill', crater: 'Crater', lake: 'Lake' }[t.natural];
+  if (natural) return natural;
+  if (t.waterway === 'waterfall') return 'Waterfall';
+  if (t.water === 'lake' || t.water === 'lagoon') return t.water === 'lake' ? 'Lake' : 'Lagoon';
+  const tourism = { attraction: 'Attraction', viewpoint: 'Viewpoint', museum: 'Museum', theme_park: 'Theme park', zoo: 'Zoo', aquarium: 'Aquarium' }[t.tourism];
+  if (tourism) return tourism;
+  if (t.boundary === 'national_park' || t.leisure === 'nature_reserve') return 'Nature park';
+  if (t.leisure === 'park' || t.leisure === 'garden') return 'Park';
+  if (t.leisure === 'beach_resort') return 'Beach';
+  if (t.amenity === 'place_of_worship') return /hindu|buddhist/.test(t.religion || '') ? 'Temple' : null;
+  if (t.historic) return 'Historic site';
+  if (t.landuse === 'rice_field' || t.crop === 'rice') return 'Rice terraces';
+  return null;
+}
+
+async function overpassNearby(lat, lon) {
+  const a = `(around:${NEARBY_POI_RADIUS},${lat},${lon})`, b = `(around:${NEARBY_TOWN_RADIUS},${lat},${lon})`;
+  const q = `[out:json][timeout:25];(
+    node${b}[place~"^(city|town|village|island|islet)$"][name];
+    way${b}[place~"^(island|islet)$"][name];
+    nwr${a}[tourism~"^(attraction|viewpoint|museum|theme_park|zoo|aquarium)$"][name];
+    nwr${a}[natural~"^(beach|peak|volcano|bay|cape|cliff|waterfall|spring|reef|valley|hill|crater)$"][name];
+    nwr${a}[waterway=waterfall][name];
+    nwr${a}[water~"^(lake|lagoon)$"][name];
+    nwr${a}[leisure~"^(park|garden|nature_reserve|beach_resort)$"][name];
+    rel${a}[boundary=national_park][name];
+    nwr${a}[amenity=place_of_worship][religion~"^(hindu|buddhist)$"][name];
+    nwr${a}[historic~"^(monument|ruins|archaeological_site|castle|temple|memorial)$"][name];
+    nwr${a}[landuse=farmland][crop=rice][name];
+  );out center tags 150;`;
+  let lastErr;
+  for (const url of OVERPASS_URLS) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'User-Agent': 'Statusbook/1.0 (personal photo tool)', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(q),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) { lastErr = new Error(`OpenStreetMap answered ${res.status}`); continue; }
+      const j = await res.json();
+      const out = [];
+      for (const e of j.elements || []) {
+        const t = e.tags || {};
+        const name = t['name:en'] || t.name;
+        const kind = osmKind(t);
+        const p = e.center || (e.lat != null ? { lat: e.lat, lon: e.lon } : null);
+        if (!name || !kind || !p) continue;
+        out.push({ name, kind, lat: p.lat, lon: p.lon });
+      }
+      return out;
+    } catch (err) { lastErr = err; }
+  }
+  throw new Error(`Nearby places: ${lastErr ? lastErr.message : 'no connection to OpenStreetMap'}`);
+}
+
+// Google Places API (New) "Nearby Search". Needs "Places API (New)" enabled for the key;
+// if it isn't, OpenStreetMap's list is used alone.
+const GOOGLE_NEARBY_TYPES = ['tourist_attraction', 'beach', 'national_park', 'park', 'hiking_area', 'hindu_temple',
+  'museum', 'marina', 'observation_deck', 'zoo', 'aquarium', 'amusement_park', 'botanical_garden'];
+const GOOGLE_NEARBY_SAFE = ['tourist_attraction', 'park', 'hindu_temple', 'museum', 'zoo', 'aquarium', 'amusement_park'];
+const GOOGLE_KIND = { beach: 'Beach', national_park: 'Nature park', park: 'Park', hiking_area: 'Hiking area', hindu_temple: 'Temple',
+  museum: 'Museum', marina: 'Harbour', observation_deck: 'Viewpoint', zoo: 'Zoo', aquarium: 'Aquarium', amusement_park: 'Theme park',
+  botanical_garden: 'Garden', tourist_attraction: 'Attraction' };
+
+async function googleNearby(lat, lon, apiKey) {
+  const ask = types => fetch('https://places.googleapis.com/v1/places:searchNearby', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'places.displayName,places.types,places.primaryType,places.location' },
+    body: JSON.stringify({ includedTypes: types, maxResultCount: 20, rankPreference: 'DISTANCE', languageCode: 'en',
+      locationRestriction: { circle: { center: { latitude: lat, longitude: lon }, radius: NEARBY_POI_RADIUS } } }),
+    signal: AbortSignal.timeout(15000),
+  });
+  let res = await ask(GOOGLE_NEARBY_TYPES);
+  if (res.status === 400) res = await ask(GOOGLE_NEARBY_SAFE); // a type unknown to this API version
+  if (!res.ok) return null;
+  const j = await res.json().catch(() => ({}));
+  return (j.places || []).map(p => {
+    const types = [p.primaryType, ...(p.types || [])].filter(Boolean);
+    const kind = GOOGLE_KIND[types.find(t => GOOGLE_KIND[t])] || 'Attraction';
+    return { name: p.displayName && p.displayName.text, kind, lat: p.location && p.location.latitude, lon: p.location && p.location.longitude };
+  }).filter(p => p.name && p.lat != null);
+}
+
+const TOWN_KINDS = new Set(['City', 'Town', 'Village', 'District', 'Island']);
+const nearbyCacheKey = (lat, lon) => `n:${lat.toFixed(3)},${lon.toFixed(3)}`;
+let nearbyQueue = Promise.resolve();
+
+function lookupNearby(lat, lon) {
+  const key = nearbyCacheKey(lat, lon);
+  const cached = loadPlaces()[key];
+  if (cached) return Promise.resolve(cached);
+  const job = nearbyQueue.then(async () => {
+    const again = loadPlaces()[key];
+    if (again) return again;
+    const apiKey = googleKey();
+    const [osm, google] = await Promise.all([
+      overpassNearby(lat, lon).catch(err => ({ err })),
+      apiKey ? googleNearby(lat, lon, apiKey).catch(() => null) : null,
+    ]);
+    if (osm.err && !google) throw osm.err;
+    const here = { lat, lon };
+    const seen = new Set();
+    const list = [];
+    for (const p of [...(google || []), ...(osm.err ? [] : osm)]) {
+      const id = p.name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      list.push({ name: p.name, kind: p.kind, dist: Math.round(distM(here, p)) });
+    }
+    list.sort((x, y) => x.dist - y.dist);
+    // Sights first (up to 20), then the towns and islands around (up to 8).
+    const sights = list.filter(p => !TOWN_KINDS.has(p.kind)).slice(0, 20);
+    const towns = list.filter(p => TOWN_KINDS.has(p.kind)).slice(0, 8);
+    const result = { sights, towns, sources: [google && google.length ? 'google' : null, osm.err ? null : 'osm'].filter(Boolean) };
+    const all = loadPlaces();
+    all[key] = result;
+    fs.writeFileSync(PLACES_FILE, JSON.stringify(all, null, 2));
+    return result;
+  });
+  nearbyQueue = job.catch(() => {});
   return job;
 }
 
@@ -784,11 +957,13 @@ function videoBitrateK(seconds, limits) {
 // A video post within the limits: H.264/AAC MP4, longest side at most maxVideoSide
 // (never enlarged), bitrate capped so the file stays under maxVideoMB.
 // The scene in its original format; WhatsApp fits it to the screen.
-function statusVideoArgs(src, start, end, out, limits, kbps) {
+const TURN_FILTER = { 90: 'transpose=1,', 180: 'hflip,vflip,', 270: 'transpose=2,' };
+
+function statusVideoArgs(src, start, end, out, limits, kbps, rotate = 0) {
   const side = limits.maxVideoSide;
   const keep = `scale='min(iw,${side})':'min(ih,${side})':force_original_aspect_ratio=decrease:force_divisible_by=2`;
   return ['-y', '-v', 'error', '-ss', String(start), '-t', String(end - start), '-i', src,
-    '-filter_complex', `[0:v]${keep},setsar=1,format=yuv420p[v]`,
+    '-filter_complex', `[0:v]${TURN_FILTER[rotate] || ''}${keep},setsar=1,format=yuv420p[v]`,
     '-map', '[v]', '-map', '0:a:0?', '-map_metadata', '0',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`,
     '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', out];
@@ -1091,6 +1266,10 @@ const routes = {
     await setFavorite(currentFolder, path.basename(file), !!body.value);
     return { ok: true };
   },
+  'POST /api/rotate': async body => {
+    const file = fileInFolder(body.name);
+    return { rotate: await setRotation(currentFolder, path.basename(file), body.value) };
+  },
   'POST /api/scenes': async body => {
     const file = fileInFolder(body.name);
     if (mediaType(body.name) !== 'video') throw Object.assign(new Error('Scenes need a video'), { code: 400 });
@@ -1117,6 +1296,12 @@ const routes = {
     // cached=1: answer only from places.json, never go online.
     if (url.searchParams.get('cached')) return { place: loadPlaces()[placeCacheKey(lat, lon)] || null, provider: placeProvider() };
     return { place: await lookupPlace(lat, lon), provider: placeProvider() };
+  },
+  'GET /api/nearby': async (body, url) => {
+    const lat = Number(url.searchParams.get('lat')), lon = Number(url.searchParams.get('lon'));
+    if (!validGeo(lat, lon)) throw Object.assign(new Error('Invalid coordinates'), { code: 400 });
+    if (url.searchParams.get('cached')) return { nearby: loadPlaces()[nearbyCacheKey(lat, lon)] || null };
+    return { nearby: await lookupNearby(lat, lon) };
   },
   'GET /api/find-place': async (body, url) => {
     const q = String(url.searchParams.get('q') || '').trim().slice(0, 200);
@@ -1300,10 +1485,13 @@ const routes = {
     const job = { out, done: false, error: null, reused: null, started: Date.now() };
     videoJobs.set(id, job);
     const limits = releaseLimits();
+    // The turn comes from the folder's own list, not from the page.
+    const rotate = (await readRotations(currentFolder))[path.basename(src)] || 0;
     (async () => {
       try {
-        // Already rendered earlier and within the limits: copy instead of rendering again.
-        const reuse = body.reuseBase ? await findReusableVideo(String(body.reuseBase), end - start, limits) : null;
+        // Already rendered earlier and within the limits: copy instead of rendering again
+        // (not for turned videos: an older clip may not be turned the same way).
+        const reuse = body.reuseBase && !rotate ? await findReusableVideo(String(body.reuseBase), end - start, limits) : null;
         if (reuse) {
           await fsp.copyFile(reuse, out);
           job.reused = path.relative(currentFolder, reuse);
@@ -1313,7 +1501,7 @@ const routes = {
         // with a lower bitrate.
         let kbps = videoBitrateK(end - start, limits);
         for (let attempt = 1; ; attempt++) {
-          await run(ffmpeg, statusVideoArgs(src, start, end, out, limits, kbps));
+          await run(ffmpeg, statusVideoArgs(src, start, end, out, limits, kbps, rotate));
           const size = (await fsp.stat(out)).size;
           if (size <= limits.maxVideoMB * MB_BYTES) break;
           if (attempt >= 3) throw new Error(`still ${(size / MB_BYTES).toFixed(1)} MB after 3 tries (limit ${limits.maxVideoMB} MB)`);

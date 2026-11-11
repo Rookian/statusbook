@@ -13,9 +13,15 @@ const state = {
   mode: 'releases',  // 'releases', 'pick', 'arrange' or 'journeys' (see posts.js)
   pendingStart: null,
   collapsed: new Set(), // "day:2026-07-12", saved per folder
+  focus: false,      // full screen view of the selected file (Pick)
 };
 
 // ---------- helpers ----------
+
+// Turned files (R / Shift+R): the original stays as it is, pictures and videos are shown
+// turned (CSS, see .rot in style.css) and the release files are made turned.
+const rotOf = name => { const it = state.items.find(x => x.name === name); return (it && it.rotate) || 0; };
+const rotClass = r => (r ? ` rot r${r}` : '');
 
 async function api(url, body) {
   const opts = body === undefined ? {} : {
@@ -212,7 +218,7 @@ function renderTile(it, i, released = releasedFiles()) {
     ondblclick: () => viewItem(it),
   },
   el('div', { class: 'tthumb' },
-    el('img', { src: thumbSrc(it), loading: 'lazy', decoding: 'async', alt: '' }),
+    el('img', { src: thumbSrc(it), loading: 'lazy', decoding: 'async', alt: '', class: rotClass(it.rotate).trim() || null }),
     it.type === 'video' ? el('span', { class: 'tvid' }, ic('play'), it.duration ? fmtTime(it.duration).replace(/\.\d$/, '') : '') : null,
     badge,
     st.state === 'picked' ? el('span', { class: 'ttick' }, ic('check')) : null,
@@ -305,6 +311,8 @@ function picksChanged() {
   const scroll = $('#list').scrollTop;
   renderList();
   $('#list').scrollTop = scroll;
+  renderStageTools();
+  if (state.focus) renderFilmstrip();
 }
 
 // ---------- viewer ----------
@@ -330,6 +338,8 @@ function renderViewer() {
   const it = current();
   stage.replaceChildren();
   $('#videoPanel').hidden = true;
+  renderStageTools();
+  if (state.focus) renderFilmstrip();
   if (!it) {
     const msg = !state.folder ? 'Choose a journey to start.'
       : state.view.length ? 'All days are collapsed. Click a day to open it.' : 'Nothing to show.';
@@ -337,13 +347,20 @@ function renderViewer() {
     $('#infoBar').textContent = '';
     return;
   }
+  const rot = it.rotate || 0;
   if (it.type === 'image') {
-    stage.append(el('img', { src: mediaUrl(it), alt: it.name, title: 'Double-click: real size', ondblclick: () => viewItem(it) }));
+    stage.append(el('img', {
+      src: mediaUrl(it), alt: it.name, class: rotClass(rot).trim() || null,
+      title: state.focus ? 'Double-click: leave full screen' : 'Double-click: full screen',
+      ondblclick: () => toggleFocus(),
+    }));
     if (it.favorite) stage.append(el('div', { class: 'bigstar' }, '★'));
   } else {
-    const v = el('video', { src: mediaUrl(it), controls: '', preload: 'metadata' });
-    // Double-click opens the viewer at the current position (instead of browser full screen).
-    v.addEventListener('dblclick', e => { e.preventDefault(); v.pause(); viewItem(it, v.currentTime); });
+    const v = turnableVideo(mediaUrl(it), rot);
+    v.preload = 'metadata';
+    // Double-click: full screen of the whole Pick view (with timeline and scenes),
+    // instead of the browser's full screen of the bare video.
+    v.addEventListener('dblclick', e => { e.preventDefault(); toggleFocus(); });
     v.addEventListener('error', () => offerPreview(it), { once: true });
     v.addEventListener('timeupdate', updateTimeline);
     v.addEventListener('loadedmetadata', renderScenes);
@@ -377,7 +394,9 @@ function offerPreview(it) {
     class: 'primary',
     onclick: () => {
       stage.replaceChildren(el('div', { class: 'msg' }, 'Creating a preview… this can take a while for long videos.'));
-      const v = el('video', { src: '/preview?name=' + encodeURIComponent(it.name), controls: '', preload: 'metadata' });
+      const v = turnableVideo('/preview?name=' + encodeURIComponent(it.name), it.rotate || 0);
+      v.preload = 'metadata';
+      v.addEventListener('dblclick', e => { e.preventDefault(); toggleFocus(); });
       v.addEventListener('timeupdate', updateTimeline);
       v.addEventListener('loadedmetadata', () => { stage.replaceChildren(v); renderScenes(); });
       v.addEventListener('play', tick);
@@ -393,6 +412,110 @@ function offerPreview(it) {
 }
 
 const video = () => $('#stage video');
+
+// A turned video gets no browser controls (they would be turned with it): a click
+// plays or pauses, the timeline below seeks, Space plays too.
+function turnableVideo(src, rot) {
+  const v = el('video', { src, class: rotClass(rot).trim() || null });
+  if (rot) {
+    v.title = 'Click: play / pause · double-click: full screen';
+    v.addEventListener('click', () => { if (v.paused) v.play().catch(() => {}); else v.pause(); });
+  } else {
+    v.controls = true;
+  }
+  return v;
+}
+
+// ---------- over the picture: turn, pick, full screen ----------
+
+function renderStageTools() {
+  const it = current();
+  $('#stageTools').hidden = !it;
+  $('#navPrev').hidden = $('#navNext').hidden = !it;
+  if (!it) return;
+  $('#navPrev').disabled = step(state.sel, -1) < 0;
+  $('#navNext').disabled = step(state.sel, 1) < 0;
+  const pick = $('#pickBtn');
+  pick.hidden = it.type !== 'image';
+  pick.textContent = it.favorite ? '★ Picked' : '☆ Pick';
+  pick.classList.toggle('on', !!it.favorite);
+  $('#focusBtn').title = state.focus ? 'Leave full screen (Esc / Enter)' : 'Full screen (Enter) · Esc to leave';
+  $('#focusBtn').textContent = state.focus ? '✕' : '⛶';
+  $('#focusName').textContent = `${it.name} · ${state.sel + 1} of ${state.view.length}`;
+}
+
+async function rotateCurrent(dir) {
+  const it = current();
+  if (!it) return;
+  const before = it.rotate || 0;
+  const v = video();
+  const at = v ? v.currentTime : 0, playing = v && !v.paused;
+  const setTo = r => {
+    it.rotate = r;
+    refreshRow(state.sel);
+    if (current() === it) {
+      renderViewer();
+      // Keep the video where it was.
+      const nv = video();
+      if (nv && at) {
+        nv.addEventListener('loadedmetadata', () => { nv.currentTime = at; if (playing) nv.play().catch(() => {}); }, { once: true });
+      }
+    }
+    if (typeof onRotated === 'function') onRotated(it);
+  };
+  setTo(((before + dir * 90) % 360 + 360) % 360);
+  try {
+    const res = await api('/api/rotate', { name: it.name, value: it.rotate });
+    if (res.rotate !== it.rotate) setTo(res.rotate);
+  } catch (err) {
+    setTo(before);
+    toast('Could not save the turn: ' + err.message);
+  }
+}
+
+// Full screen: the whole right side (picture, timeline, scenes) fills the screen, with
+// a strip of the neighbouring files below; all keys keep working.
+function toggleFocus(on = !state.focus) {
+  if (on && (state.mode !== 'pick' || !current())) return;
+  if (state.focus === on) return;
+  state.focus = on;
+  document.body.classList.toggle('focus', on);
+  if (on) {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => { /* the overlay works without it */ });
+    }
+  } else if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
+  renderStageTools();
+  if (on) renderFilmstrip(); else $('#filmstrip').replaceChildren();
+  if (!on) scrollSelIntoView();
+}
+
+// The files around the selected one (visible days only), the selected one in the middle.
+function renderFilmstrip() {
+  const strip = $('#filmstrip');
+  if (!state.focus) return;
+  const visible = [];
+  for (let i = 0; i < state.view.length; i++) if (!isHidden(state.view[i])) visible.push(i);
+  const at = Math.max(0, visible.indexOf(state.sel));
+  const from = Math.max(0, at - 14), to = Math.min(visible.length, at + 15);
+  const released = releasedFiles();
+  strip.replaceChildren(...visible.slice(from, to).map(i => {
+    const it = state.view[i];
+    const st = fileStatus(it, released);
+    return el('div', {
+      class: `fthumb ${st.state}` + (i === state.sel ? ' sel' : ''), title: it.name,
+      onclick: () => select(i),
+    },
+    el('img', { src: thumbSrc(it), loading: 'lazy', decoding: 'async', alt: '', class: rotClass(it.rotate).trim() || null }),
+    it.type === 'video' ? el('span', { class: 'fvid' }, '▶') : null,
+    st.state === 'picked' ? el('span', { class: 'ftick' }, '✓') : null);
+  }));
+  const sel = strip.querySelector('.sel');
+  if (sel) sel.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+
 
 // Chromium's own video controls (play button, time bar) keep the keyboard focus after a
 // click and swallow keys, so I / O / F / Space did nothing. Hand the focus back to the
@@ -633,7 +756,9 @@ function openViewer(what) {
     node = what.canvas;
     showSize(node.width, node.height);
   } else if (what.type === 'video') {
-    node = el('video', { src: what.src, controls: '', autoplay: '', playsinline: '' });
+    node = turnableVideo(what.src, what.rotate || 0);
+    node.autoplay = true;
+    node.playsInline = true;
     node.addEventListener('loadedmetadata', () => {
       if (what.start) node.currentTime = what.start;
       showSize(node.videoWidth, node.videoHeight, ` · ${fmtTime(node.duration)}`);
@@ -648,9 +773,11 @@ function openViewer(what) {
     // Double-clicking a video would otherwise switch the browser to full screen.
     node.addEventListener('dblclick', e => e.preventDefault());
   } else {
-    node = el('img', { src: what.src, alt: what.title || '' });
+    node = el('img', { src: what.src, alt: what.title || '', class: rotClass(what.rotate || 0).trim() || null });
     node.addEventListener('load', () => showSize(node.naturalWidth, node.naturalHeight));
   }
+  // Turned files are shown fitted only (real size would need the layout turned too).
+  $('#viewerFit').hidden = !!what.rotate;
   // Clicking pictures switches real size / fit; videos keep their clicks for play/pause.
   if (what.type !== 'video') node.addEventListener('click', e => { e.stopPropagation(); toggleViewerFit(); });
   stage.append(node);
@@ -674,10 +801,10 @@ function closeViewer() {
 function viewItem(it, start = 0) {
   if (!it) return;
   if (it.type === 'video') {
-    openViewer({ title: it.name, type: 'video', src: mediaUrl(it), start,
+    openViewer({ title: it.name, type: 'video', src: mediaUrl(it), start, rotate: it.rotate || 0,
       fallbackSrc: '/preview?name=' + encodeURIComponent(it.name) });
   } else {
-    openViewer({ title: it.name, type: 'image', src: mediaUrl(it) });
+    openViewer({ title: it.name, type: 'image', src: mediaUrl(it), rotate: it.rotate || 0 });
   }
 }
 
@@ -701,7 +828,14 @@ function onKey(e) {
     case 'f': case 'F': toggleFavorite(); break;
     case 'i': case 'I': markIn(); break;
     case 'o': case 'O': markOut(); break;
-    case 'Escape': state.pendingStart = null; renderScenes(); break;
+    case 'r': case 'R': rotateCurrent(e.shiftKey ? -1 : 1); break;
+    case 'Enter': toggleFocus(); break;
+    case 'PageDown': select(step(state.sel, 1)); break;
+    case 'PageUp': select(step(state.sel, -1)); break;
+    case 'Escape':
+      // First Esc drops a scene start that is waiting for its end, the next leaves full screen.
+      if (state.pendingStart != null || !state.focus) { state.pendingStart = null; renderScenes(); } else toggleFocus(false);
+      break;
     case 'Home': select(step(-1, 1)); break;
     case 'End': select(step(state.view.length, -1)); break;
     default: handled = false;
@@ -727,6 +861,19 @@ function init() {
     seek(((e.clientX - r.left) / r.width) * v.duration);
   });
   window.addEventListener('keydown', onKey, true);
+  $('#rotLeft').addEventListener('click', () => rotateCurrent(-1));
+  $('#rotRight').addEventListener('click', () => rotateCurrent(1));
+  $('#pickBtn').addEventListener('click', toggleFavorite);
+  $('#focusBtn').addEventListener('click', () => toggleFocus());
+  $('#navPrev').addEventListener('click', () => select(step(state.sel, -1)));
+  $('#navNext').addEventListener('click', () => select(step(state.sel, 1)));
+  // Buttons hand the keyboard back to the page, so I / O / Space work right after a click.
+  for (const id of ['rotLeft', 'rotRight', 'pickBtn', 'focusBtn', 'navPrev', 'navNext']) {
+    const b = $('#' + id);
+    b.addEventListener('pointerup', () => setTimeout(() => b.blur(), 0));
+  }
+  // Esc in the browser's full screen ends it without a key event: leave the view too.
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && state.focus) toggleFocus(false); });
   $('#viewerClose').addEventListener('click', closeViewer);
   $('#viewerFit').addEventListener('click', toggleViewerFit);
   // A click beside the picture closes; Esc closes the dialog by itself.

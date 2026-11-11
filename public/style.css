@@ -161,7 +161,7 @@ main { flex: 1; display: flex; min-height: 0; gap: 16px; padding: 4px 18px 14px;
 .group .chev .icon { width: 15px; height: 15px; }
 .group .count { font-weight: 500; color: var(--muted); letter-spacing: .06em; }
 .group.all-sent { opacity: .6; }
-.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px; padding: 2px 2px 12px; }
+.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px; padding: 12px 2px 12px; }
 .pgrid:empty { display: none; }
 /* Soft tiles: rounded photos with a glossy sheen, time and name over the bottom edge */
 .tile { cursor: pointer; border-radius: 16px; transition: transform .25s cubic-bezier(.3, 1.4, .5, 1); }
@@ -171,7 +171,15 @@ main { flex: 1; display: flex; min-height: 0; gap: 16px; padding: 4px 18px 14px;
 .tthumb::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(160deg, rgba(255, 255, 255, .3) 0%, rgba(255, 255, 255, 0) 32%), linear-gradient(180deg, transparent 58%, rgba(0, 0, 0, .7)); }
 .tile.sent .tthumb img, .tile.released .tthumb img { opacity: .45; filter: saturate(.25) brightness(.95); }
 .tile.picked .tthumb { box-shadow: 0 0 0 3px var(--ink), 0 10px 22px rgba(12, 53, 50, .22); }
-.tile.sel .tthumb { outline: 3px solid var(--ink); outline-offset: 3px; }
+/* The open file: its own lagoon colour (picked uses ink), a glow, a lift, and a "Viewing" tag,
+   so it reads at a glance and never looks like a picked tile. */
+.tile.sel { position: relative; transform: translateY(-4px); }
+.tile.sel .tthumb { outline: 4px solid var(--lagoon); outline-offset: 3px; box-shadow: 0 0 0 12px rgba(25, 168, 164, .25), 0 14px 30px rgba(12, 53, 50, .35); }
+.tile.sel.picked .tthumb { box-shadow: 0 0 0 3px var(--ink), 0 0 0 12px rgba(25, 168, 164, .25), 0 14px 30px rgba(12, 53, 50, .35); }
+.tile.sel .tthumb img { opacity: 1; filter: none; }
+.tile.sel .tthumb::before { content: 'Viewing'; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; padding: 4px 12px; border-radius: 999px; background: var(--lagoon); color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; box-shadow: 0 4px 12px rgba(0, 0, 0, .3); pointer-events: none; animation: selfade 1.6s ease forwards; }
+.tile.sel .tmeta .time, .tile.sel .tmeta .name { color: #fff; font-weight: 700; }
+@keyframes selfade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 .tbadge { position: absolute; top: 8px; left: 8px; z-index: 1; display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 800; padding: 2px 9px; border-radius: 999px; }
 .tbadge .icon { width: 12px; height: 12px; stroke-width: 2.6; }
 .tbadge.picked { background: var(--ink); color: #fff; }
@@ -192,7 +200,8 @@ main { flex: 1; display: flex; min-height: 0; gap: 16px; padding: 4px 18px 14px;
 
 /* the selected file: photos and videos look best on dark water */
 #viewer { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #0c2a29; position: relative; }
+#stageWrap { flex: 1; min-height: 0; display: flex; position: relative; }
+#stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #0c2a29; position: relative; overflow: hidden; container-type: size; }
 #stage img, #stage video { max-width: 100%; max-height: 100%; object-fit: contain; }
 #stage .empty, #stage .msg { color: rgba(255, 255, 255, .75); text-align: center; padding: 20px; }
 #stage .msg button { margin-top: 12px; }
@@ -292,7 +301,7 @@ dialog progress { width: 100%; height: 10px; accent-color: var(--ink); }
 .gsec-sent:hover { opacity: 1; }
 .gsec-new { border-bottom: 0; }
 .gsec-new > .gsec-head { background: transparent; position: static; }
-.ggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px 14px; align-content: start; padding: 6px 4px 18px; }
+.ggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 22px 20px; align-content: start; padding: 16px 14px 18px; }
 .gnote { color: var(--muted); font-size: 12.5px; margin: 22px 4px 4px; }
 .gnote.rel-line { font-size: 11.5px; letter-spacing: .13em; text-transform: uppercase; display: flex; gap: 10px; align-items: center; }
 .gnote.rel-line b { color: var(--text); letter-spacing: .12em; }
@@ -321,7 +330,12 @@ dialog progress { width: 100%; height: 10px; accent-color: var(--ink); }
 .card { position: relative; display: flex; flex-direction: column; gap: 5px; cursor: pointer; }
 .frame { position: relative; aspect-ratio: 9 / 16; border-radius: 16px; overflow: hidden; background: #0c2a29; box-shadow: 0 10px 22px rgba(12, 53, 50, .2); transition: transform .25s cubic-bezier(.3, 1.4, .5, 1), box-shadow .2s; }
 .card:hover .frame { transform: translateY(-3px); }
-.card.sel .frame { box-shadow: 0 0 0 3px var(--ink), 0 10px 22px rgba(12, 53, 50, .22); }
+/* The open post: same look as the open file in the explorer (lagoon ring, glow, lift, "Viewing" tag). */
+.card.sel .frame { transform: translateY(-4px); outline: 4px solid var(--lagoon); outline-offset: 3px; box-shadow: 0 0 0 12px rgba(25, 168, 164, .25), 0 14px 30px rgba(12, 53, 50, .35); }
+.card.sel.removed .frame { opacity: .7; }
+.card.sel .frame::before { content: 'Viewing'; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 3; padding: 4px 12px; border-radius: 999px; background: var(--lagoon); color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; box-shadow: 0 4px 12px rgba(0, 0, 0, .3); pointer-events: none; animation: selfade 1.6s ease forwards; }
+.card.sel .meta { color: var(--lagoon-text); }
+.card.sel .meta .num, .card.sel .meta .name { color: var(--lagoon-text); font-weight: 800; }
 .card.dragging { opacity: .4; }
 /* where a dragged card will land: a bar left or right of the target card */
 .card.drop-before::before, .card.drop-after::after { content: ''; position: absolute; top: 0; height: calc(100% - 30px); width: 4px; border-radius: 2px; background: var(--ink); z-index: 2; }
@@ -487,3 +501,64 @@ dialog ol.steps { padding-left: 20px; margin: 8px 0; display: flex; flex-directi
 #spellList .msg { font-size: 13px; color: var(--muted); }
 #spellList .fixes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .spellnote { font-size: 12px; margin: 8px 0 0; }
+
+/* Nearby places: a choice of towns, beaches, viewpoints, sights around the spot */
+#geoInfo .nearby { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line); }
+#geoInfo .nhead { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+#geoInfo .nlist { display: flex; flex-wrap: wrap; gap: 6px; }
+#geoInfo .nchip { display: inline-flex; align-items: baseline; gap: 6px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); cursor: pointer; text-align: left; transition: background .15s, border-color .15s; }
+#geoInfo .nchip:hover { background: var(--lagoon-soft); border-color: var(--lagoon); }
+#geoInfo .nchip .nname { font-weight: 700; }
+#geoInfo .nchip small { color: var(--muted); font-size: 11px; }
+
+
+/* ---------- turned files (R / Shift+R in Pick) ----------
+   The picture is laid out in a box with the container's sides swapped, then turned,
+   so it fits (contain) or fills (cover) exactly like an unturned one. */
+.tthumb, .frame, #viewerStage.fit { container-type: size; }
+.rot { position: absolute !important; left: 50% !important; top: 50% !important; max-width: none !important; max-height: none !important; margin: 0 !important; }
+.rot.r90, .rot.r270 { width: 100cqh !important; height: 100cqw !important; }
+.rot.r180 { width: 100cqw !important; height: 100cqh !important; }
+.rot.r90 { transform: translate(-50%, -50%) rotate(90deg); }
+.rot.r180 { transform: translate(-50%, -50%) rotate(180deg); }
+.rot.r270 { transform: translate(-50%, -50%) rotate(270deg); }
+#stage .rot, #viewerStage .rot { object-fit: contain; }
+
+/* ---------- over the picture: turn, pick, full screen, previous / next ---------- */
+#stageTools { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 3; display: flex; justify-content: flex-end; align-items: center; gap: 6px; pointer-events: none; opacity: 0; transition: opacity .2s; }
+#stageTools > * { pointer-events: auto; }
+#stageWrap:hover #stageTools, body.focus #stageTools { opacity: 1; }
+#stageTools button, .stagenav { border: 1px solid rgba(255, 255, 255, .25); background: rgba(8, 26, 25, .55); color: #fff; backdrop-filter: blur(8px); border-radius: 999px; padding: 5px 12px; font-size: 14px; cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+#stageTools button:hover, .stagenav:hover:not(:disabled) { background: rgba(25, 168, 164, .85); border-color: transparent; }
+#stageTools button.on { background: #fff; color: var(--ink); }
+#stageTools [hidden] { display: none; }
+#stageTools #rotLeft, #stageTools #rotRight, #stageTools #focusBtn { width: 36px; padding: 5px 0; font-size: 17px; }
+#focusName { margin-right: auto; color: rgba(255, 255, 255, .9); font-size: 13px; text-shadow: 0 1px 4px rgba(0, 0, 0, .8); }
+.stagenav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 46px; height: 64px; padding: 0; font-size: 34px; line-height: 1; display: none; }
+.stagenav.prev { left: 14px; }
+.stagenav.next { right: 14px; }
+.stagenav:disabled { opacity: .25; cursor: default; }
+body.focus .stagenav:not([hidden]) { display: block; }
+body:not(.focus) .focus-only { display: none !important; }
+
+/* ---------- full screen (Enter or ⛶ in Pick) ---------- */
+body.focus #viewer { position: fixed; inset: 0; z-index: 40; border: none; border-radius: 0; background: #071c1b; box-shadow: none; backdrop-filter: none; color: #e7f1ef; }
+body.focus #stage { background: #071c1b; }
+body.focus #videoPanel { border-top: 1px solid rgba(255, 255, 255, .08); background: rgba(255, 255, 255, .03); }
+body.focus #timeline { background: rgba(255, 255, 255, .12); }
+body.focus #tlHead { background: #fff; }
+body.focus #sceneBar button { background: rgba(255, 255, 255, .08); color: #fff; border-color: rgba(255, 255, 255, .2); }
+body.focus #sceneBar button:hover { background: rgba(25, 168, 164, .85); }
+body.focus #sceneList li:hover { background: rgba(255, 255, 255, .06); }
+body.focus #sceneList .len, body.focus #sceneList .del, body.focus #timeInfo, body.focus #pendingInfo { color: rgba(255, 255, 255, .65); }
+body.focus #infoBar { color: rgba(255, 255, 255, .6); border-top-color: rgba(255, 255, 255, .08); }
+#filmstrip { display: flex; gap: 8px; padding: 10px 14px; overflow-x: auto; flex: none; border-top: 1px solid rgba(255, 255, 255, .08); scrollbar-width: thin; }
+.fthumb { position: relative; flex: none; width: 64px; height: 80px; border-radius: 10px; overflow: hidden; cursor: pointer; background: #234; container-type: size; opacity: .7; transition: opacity .15s, transform .15s; }
+.fthumb:hover { opacity: 1; transform: translateY(-2px); }
+.fthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fthumb.sent img, .fthumb.released img { filter: saturate(.25) brightness(.8); }
+.fthumb.picked { box-shadow: inset 0 0 0 3px #fff; }
+.fthumb.sel { opacity: 1; outline: 3px solid var(--lagoon); outline-offset: 2px; transform: translateY(-3px); }
+.fthumb .fvid, .fthumb .ftick { position: absolute; z-index: 1; font-size: 10px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .9); }
+.fthumb .fvid { left: 5px; bottom: 3px; }
+.fthumb .ftick { right: 4px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink); display: grid; place-items: center; text-shadow: none; }
