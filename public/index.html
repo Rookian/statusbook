@@ -58,9 +58,12 @@
       <span class="grow"></span>
       <button id="newJourneyBtn" class="primary journeys-only"><span data-icon="plus"></span>New journey</button>
       <nav class="stepnav in-journey" role="tablist">
-        <button id="tabReleases" class="on" role="tab"><span data-icon="releases"></span>Releases</button>
-        <button id="tabPick" role="tab" title="Pick photos and scenes for the release you are making"><span data-icon="pick"></span>Pick</button>
-        <button id="tabArrange" role="tab" title="Captions, text posts, order and day intros of the release you are making"><span data-icon="arrange"></span>Arrange <span id="postCount"></span></button>
+        <!-- Only Releases up here; inside the release being made, its two steps. -->
+        <button id="tabReleases" class="on" role="tab" title="All releases of this journey"><span class="out-release" data-icon="releases"></span><span class="in-release" data-icon="back"></span>Releases</button>
+        <button id="tabFavorites" class="out-release" role="tab" title="All your favorites (F marks one), on their own: view, full screen, turn"><span class="heart">♥</span>Favorites</button>
+        <span id="draftLabel" class="in-release"></span>
+        <button id="tabPick" class="in-release" role="tab" title="Step 1: pick the photos and video scenes for this release"><span class="stepno">1</span>Pick</button>
+        <button id="tabArrange" class="in-release" role="tab" title="Step 2: captions, text posts, day intros and the order of the posts"><span class="stepno">2</span>Compose <span id="postCount"></span></button>
         <button id="journeyEditBtn" class="icon-only" title="Journey settings: name, folder"><span data-icon="settings"></span></button>
       </nav>
     </div>

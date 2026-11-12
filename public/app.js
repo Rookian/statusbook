@@ -10,7 +10,7 @@ const state = {
   items: [],
   view: [],          // items in display order: oldest first
   sel: -1,           // index into view
-  mode: 'releases',  // 'releases', 'pick', 'arrange' or 'journeys' (see posts.js)
+  mode: 'releases',  // 'releases', 'pick', 'arrange', 'favorites' or 'journeys' (see posts.js)
   pendingStart: null,
   collapsed: new Set(), // "day:2026-07-12", saved per folder
   focus: false,      // full screen view of the selected file (Pick)
@@ -80,6 +80,8 @@ function groupLabel(key) {
 }
 
 const current = () => state.view[state.sel] || null;
+// The gallery with the large view: Pick (inside a release) or Favorites (on its own).
+const inPickView = () => state.mode === 'pick' || state.mode === 'favorites';
 const isMarked = it => (it.type === 'image' ? it.favorite : it.scenes.length > 0);
 
 const collapseKey = it => `day:${groupKey(it)}`;
@@ -150,6 +152,7 @@ function fileStatus(it, released = releasedFiles()) {
 
 // Why a file can't be picked or cut right now, or null if it can.
 function pickBlocked(it) {
+  if (state.mode === 'favorites') return 'Picking and cutting happen inside a release: Releases → 1 · Pick.';
   const st = fileStatus(it);
   if (st.state === 'sent' || st.state === 'released') return `${it.name} is in Release ${st.no} already. Released files can't be picked again.`;
   if (!hasDraft()) return 'Start a new release first: Releases → ＋ New release.';
@@ -216,7 +219,7 @@ function renderTile(it, i, released = releasedFiles()) {
   const badge = st.state === 'sent' ? el('span', { class: 'tbadge sent' }, ic('check'), `Release ${st.no}`)
     : st.state === 'released' ? el('span', { class: 'tbadge released' }, `Release ${st.no}`)
       : st.state === 'picked' && it.type === 'video' ? el('span', { class: 'tbadge picked' }, `${it.scenes.length} scene${it.scenes.length === 1 ? '' : 's'}`)
-        : st.state === 'leftout' ? el('span', { class: 'tbadge leftout', title: 'Picked, but removed in Arrange' }, 'Left out')
+        : st.state === 'leftout' ? el('span', { class: 'tbadge leftout', title: 'Picked, but removed in Compose' }, 'Left out')
           : null;
   const time = it.date ? it.date.slice(11, 16) : '';
   // Soft tile: the photo with rounded corners, its time and name over the bottom edge.
@@ -258,7 +261,7 @@ function renderPickBar() {
     const n = exportEntries().filter(isNew).length;
     bar.append(el('span', {}, 'Picking for ', el('b', {}, draftTitle()), ` · ${n} post${n === 1 ? '' : 's'}`),
       el('span', { class: 'grow' }),
-      el('button', { onclick: () => setMode('arrange') }, 'Arrange', ic('next')));
+      el('button', { onclick: () => setMode('arrange'), title: 'Step 2: captions, text posts, day intros, order' }, 'Next: Compose', ic('next')));
   } else {
     bar.classList.add('none');
     bar.append(el('span', {}, 'No release is being made. Start one to pick photos and scenes.'),
@@ -633,7 +636,7 @@ async function rotateCurrent(dir) {
 // Full screen: the whole right side (picture, timeline, scenes) fills the screen, with
 // a strip of the neighbouring files below; all keys keep working.
 function toggleFocus(on = !state.focus) {
-  if (on && (state.mode !== 'pick' || !current())) return;
+  if (on && (!inPickView() || !current())) return;
   if (state.focus === on) return;
   state.focus = on;
   document.body.classList.toggle('focus', on);
@@ -992,7 +995,7 @@ function viewItem(it, start = 0) {
 // ---------- keyboard ----------
 
 function onKey(e) {
-  if (state.mode !== 'pick' || document.querySelector('dialog[open]')) return;
+  if (!inPickView() || document.querySelector('dialog[open]')) return;
   const tag = e.target.tagName;
   if (tag === 'SELECT' || (tag === 'INPUT' && e.target.type !== 'checkbox')) return;
   if (e.ctrlKey || e.altKey || e.metaKey) return;
@@ -1060,7 +1063,12 @@ function init() {
     b.addEventListener('pointerup', () => setTimeout(() => b.blur(), 0));
   }
   // Esc in the browser's full screen ends it without a key event: leave the view too.
-  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && state.focus) toggleFocus(false); });
+  document.addEventListener('fullscreenchange', () => {
+    const fs = document.fullscreenElement;
+    // A bare video in the browser's full screen hides timeline and scenes: use ours.
+    if (fs && fs.tagName === 'VIDEO' && inPickView()) { document.exitFullscreen().catch(() => {}); toggleFocus(true); return; }
+    if (!fs && state.focus) toggleFocus(false);
+  });
   $('#viewerClose').addEventListener('click', closeViewer);
   $('#viewerFit').addEventListener('click', toggleViewerFit);
   // A click beside the picture closes; Esc closes the dialog by itself.

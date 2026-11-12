@@ -632,8 +632,8 @@ function draftCard() {
     el('span', { class: 'chip new' }, 'Draft'),
     el('span', { class: 'muted' }, list.length ? `${list.length} post${list.length === 1 ? '' : 's'}` + (days ? ` · ${days}` : '') : 'nothing picked yet'),
     el('span', { class: 'grow' }),
-    el('button', { onclick: () => setMode('pick') }, ic('pick'), 'Pick'),
-    el('button', { onclick: () => setMode('arrange') }, ic('arrange'), 'Arrange'),
+    el('button', { onclick: () => setMode('pick'), title: 'Step 1: pick photos and video scenes' }, ic('pick'), '1 · Pick'),
+    el('button', { onclick: () => setMode('arrange'), title: 'Step 2: captions, text posts, day intros, order' }, ic('arrange'), '2 · Compose'),
     el('button', { class: 'primary', disabled: list.length ? null : '', onclick: openPostsExport, title: 'Make the files of this release, within WhatsApp\'s limits' }, ic('package'), 'Create release'),
     el('button', { class: 'quiet', onclick: deleteDraft, title: 'Unpick everything in this draft' }, ic('trash'), 'Delete draft'));
 }
@@ -2237,15 +2237,17 @@ const chevron = (key, open) => el('button', {
 // Inside a journey: Releases (the draft and the releases), Pick (the gallery, picking
 // for the draft) and Arrange (the draft's posts). Releases and Arrange share the posts
 // view. "journeys" is the list of journeys (journeys.js).
-const MODES = ['releases', 'pick', 'arrange', 'journeys'];
-const MODE_VIEW = { releases: 'postsView', pick: 'pickView', arrange: 'postsView', journeys: 'journeysView' };
+const MODES = ['releases', 'pick', 'arrange', 'favorites', 'journeys'];
+const MODE_VIEW = { releases: 'postsView', pick: 'pickView', arrange: 'postsView', favorites: 'pickView', journeys: 'journeysView' };
 const inPostsView = () => state.mode === 'releases' || state.mode === 'arrange';
 
 // The step you were in last time (Releases if none, or from older versions).
 function lastStep() {
   try {
     const saved = localStorage.getItem('media-picker-mode');
-    return saved === 'pick' || saved === 'arrange' ? saved : 'releases';
+    // Pick and Compose are steps inside the release being made: only with a draft.
+    if (saved === 'favorites') return saved;
+    return (saved === 'pick' || saved === 'arrange') && hasDraft() ? saved : 'releases';
   } catch { return 'releases'; }
 }
 
@@ -2260,14 +2262,27 @@ function setMode(mode, force = false) {
     const tab = $(`#tab${m[0].toUpperCase()}${m.slice(1)}`);
     if (tab) tab.classList.toggle('on', m === mode);
   }
+  // Favorites uses the Pick view (gallery and large view), without picking.
+  if (mode === 'favorites') document.body.classList.add('mode-pick');
+  // Inside the release being made (Pick, Compose): its name and steps in the header.
+  document.body.classList.toggle('in-draft', mode === 'pick' || mode === 'arrange');
+  $('#draftLabel').textContent = hasDraft() ? draftTitle() : 'New release';
   for (const v of new Set(Object.values(MODE_VIEW))) $(`#${v}`).hidden = v !== MODE_VIEW[mode];
   document.body.classList.toggle('mode-posts', inPostsView());
-  if (mode !== 'pick') {
+  if (!inPickView()) {
     const v = video();
     if (v) v.pause();
     toggleFocus(false);
   }
-  if (mode === 'pick') { renderList(); renderPickBar(); }
+  if (inPickView()) {
+    // Favorites shows only favorites; Pick starts with all files.
+    const lovedOnly = mode === 'favorites';
+    if (state.lovedOnly !== lovedOnly) setLovedOnly(lovedOnly); else renderList();
+    renderStageTools();
+    renderPickBar();
+    // Back to the release being made: start at the first day that isn't released yet.
+    if (mode === 'pick' && cameFrom !== 'pick' && hasDraft()) jumpToNewDays();
+  }
   if (inPostsView()) {
     // Only posts of this view can stay selected.
     if (mode === 'arrange' && posts.selKey && !isNew({ key: posts.selKey })) posts.selKey = null;
@@ -2361,6 +2376,7 @@ function initPosts() {
     ev.target.blur();
   });
   $('#tabReleases').addEventListener('click', () => setMode('releases'));
+  $('#tabFavorites').addEventListener('click', () => setMode('favorites'));
   $('#tabPick').addEventListener('click', () => setMode('pick'));
   $('#tabArrange').addEventListener('click', () => {
     if (!hasDraft()) { toast('Start a new release first (＋ New release)'); return; }

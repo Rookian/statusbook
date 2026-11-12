@@ -590,5 +590,16 @@ body.focus #speedSeg button.on { background: #fff; color: var(--ink); }
 body.focus #sceneList .scspeed { background: rgba(255, 255, 255, .1); color: #fff; border-color: rgba(255, 255, 255, .2); }
 body.focus #sceneList .scspeed option { color: #000; }
 /* ---------- header: only Releases; inside the release being made, its two steps ---------- */
+.stepnav .in-release { display: none; }
+body.in-draft .stepnav .in-release { display: inline-flex; }
+body.in-draft .stepnav .out-release { display: none; }
+body.in-draft #tabReleases { color: rgba(255, 255, 255, .75); }
+#draftLabel { align-items: center; padding: 0 6px 0 10px; margin-left: 2px; border-left: 1px solid rgba(255, 255, 255, .25); color: #fff; font-weight: 700; font-size: 14px; white-space: nowrap; }
+.stepnav .stepno { display: inline-grid; place-items: center; width: 20px; height: 20px; margin-right: 7px; border-radius: 50%; background: rgba(255, 255, 255, .2); font-size: 11.5px; font-weight: 800; }
+.stepnav button.on .stepno { background: var(--ink); color: #fff; }
+
 /* ---------- Favorites (♥ at the top right): the Pick view without picking ---------- */
+.stepnav .heart { color: #ff5c7a; margin-right: 6px; font-size: 15px; }
 .stepnav button.on .heart { color: #e23d5d; }
+body.mode-favorites :is(#listBar, #pickBar, #wholeVideo, #markIn, #markOut, #pendingInfo, #pickBtn, #sceneList .del) { display: none !important; }
+body.mode-favorites #sceneList .scspeed { pointer-events: none; opacity: .7; }
