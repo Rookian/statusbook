@@ -20,6 +20,7 @@ const SETTINGS_FILE = path.join(APP_DIR, 'settings.json');
 const PREVIEW_DIR = path.join(os.tmpdir(), 'media-picker-previews');
 const EXPORT_DIR_NAME = 'WhatsApp';
 const FAVORITES_FILE = '_favorites.json';
+const LOVED_FILE = '_loved.json'; // ♥ favorites (photos and videos), separate from picks
 const ROTATIONS_FILE = '_rotations.json'; // { rotations: { "name.jpg": 90 } }, clockwise degrees
 const CUTS_SUFFIX = '.cuts.json';
 const POSTS_FILE = '_posts.json';
@@ -297,6 +298,23 @@ async function readFavorites(folder) {
   }
 }
 
+async function readLoved(folder) {
+  try {
+    const j = JSON.parse(await fsp.readFile(path.join(folder, LOVED_FILE), 'utf8'));
+    return new Set(Array.isArray(j.loved) ? j.loved : []);
+  } catch {
+    return new Set();
+  }
+}
+
+async function setLoved(folder, name, value) {
+  const loved = await readLoved(folder);
+  if (value) loved.add(name); else loved.delete(name);
+  const file = path.join(folder, LOVED_FILE);
+  if (loved.size === 0) await fsp.rm(file, { force: true });
+  else await writeJsonAtomic(file, { loved: [...loved].sort() });
+}
+
 async function setFavorite(folder, name, value) {
   const favs = await readFavorites(folder);
   if (value) favs.add(name); else favs.delete(name);
@@ -374,6 +392,7 @@ async function scanFolder(folder) {
   const entries = await fsp.readdir(folder, { withFileTypes: true });
   const favs = await readFavorites(folder);
   const rots = await readRotations(folder);
+  const loved = await readLoved(folder);
   const items = [];
   const tasks = entries
     .filter(e => e.isFile() && mediaType(e.name))
@@ -384,6 +403,7 @@ async function scanFolder(folder) {
         const st = await fsp.stat(full);
         const item = { name: e.name, type, size: st.size, ...(await getMeta(full, type, st)) };
         item.rotate = rots[e.name] || 0;
+        item.loved = loved.has(e.name);
         if (type === 'image') item.favorite = favs.has(e.name);
         else item.scenes = await readScenes(full);
         items.push(item);
@@ -1292,6 +1312,11 @@ const routes = {
     const file = fileInFolder(body.name);
     if (mediaType(body.name) !== 'image') throw Object.assign(new Error('Only images can be favorites'), { code: 400 });
     await setFavorite(currentFolder, path.basename(file), !!body.value);
+    return { ok: true };
+  },
+  'POST /api/love': async body => {
+    const file = fileInFolder(body.name);
+    await setLoved(currentFolder, path.basename(file), !!body.value);
     return { ok: true };
   },
   'POST /api/rotate': async body => {
