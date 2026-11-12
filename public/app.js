@@ -14,6 +14,8 @@ const state = {
   pendingStart: null,
   collapsed: new Set(), // "day:2026-07-12", saved per folder
   focus: false,      // full screen view of the selected file (Pick)
+  speed: 1,          // playback speed in Pick; new scenes get it (slow motion)
+  muted: false,
 };
 
 // ---------- helpers ----------
@@ -365,6 +367,7 @@ function renderViewer() {
     v.addEventListener('timeupdate', updateTimeline);
     v.addEventListener('loadedmetadata', renderScenes);
     v.addEventListener('play', tick);
+    applyPlayback(v);
     releaseControlsFocus(v);
     stage.append(v);
     $('#videoPanel').hidden = false;
@@ -397,6 +400,7 @@ function offerPreview(it) {
       const v = turnableVideo('/preview?name=' + encodeURIComponent(it.name), it.rotate || 0);
       v.preload = 'metadata';
       v.addEventListener('dblclick', e => { e.preventDefault(); toggleFocus(); });
+      applyPlayback(v);
       v.addEventListener('timeupdate', updateTimeline);
       v.addEventListener('loadedmetadata', () => { stage.replaceChildren(v); renderScenes(); });
       v.addEventListener('play', tick);
@@ -415,15 +419,86 @@ const video = () => $('#stage video');
 
 // A turned video gets no browser controls (they would be turned with it): a click
 // plays or pauses, the timeline below seeks, Space plays too.
-function turnableVideo(src, rot) {
+function turnableVideo(src, rot, native = false) {
   const v = el('video', { src, class: rotClass(rot).trim() || null });
-  if (rot) {
+  if (rot || !native) {
     v.title = 'Click: play / pause · double-click: full screen';
     v.addEventListener('click', () => { if (v.paused) v.play().catch(() => {}); else v.pause(); });
   } else {
     v.controls = true;
   }
   return v;
+}
+
+// ---------- playing videos: own controls (play, sound, speed) ----------
+// Pick uses its own controls instead of the browser's: they work the same in full
+// screen, for turned videos, and never take the keyboard away.
+
+const SPEEDS = [1, 0.75, 0.5, 0.25];
+const speedLabel = x => ({ 1: '1×', 0.75: '¾×', 0.5: '½×', 0.25: '¼×' }[x] || `${x}×`);
+
+function applyPlayback(v) {
+  v.defaultPlaybackRate = state.speed;
+  v.playbackRate = state.speed;
+  v.preservesPitch = true;
+  v.muted = state.muted;
+  const sync = () => updatePlayButtons();
+  for (const type of ['play', 'pause', 'ended', 'loadedmetadata']) v.addEventListener(type, sync);
+  // Loading a file resets the rate: set it again once it's there.
+  v.addEventListener('loadedmetadata', () => { v.playbackRate = state.speed; });
+}
+
+function togglePlay() {
+  const v = video();
+  if (!v) return;
+  if (v.paused) v.play().catch(() => {}); else v.pause();
+}
+
+function setSpeed(x) {
+  state.speed = SPEEDS.includes(x) ? x : 1;
+  const v = video();
+  if (v) v.playbackRate = state.speed;
+  updatePlayButtons();
+}
+
+function stepSpeed(dir) {
+  const i = SPEEDS.indexOf(state.speed);
+  setSpeed(SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + dir))]);
+  toast(`Speed ${speedLabel(state.speed)}` + (state.speed < 1 ? ' · new scenes get this slow motion' : ''));
+}
+
+function toggleMute() {
+  state.muted = !state.muted;
+  const v = video();
+  if (v) v.muted = state.muted;
+  updatePlayButtons();
+}
+
+function updatePlayButtons() {
+  const v = video();
+  $('#playBtn').textContent = v && !v.paused ? '❚❚' : '▶';
+  $('#muteBtn').textContent = state.muted ? '🔇' : '🔊';
+  for (const b of document.querySelectorAll('#speedSeg button')) b.classList.toggle('on', Number(b.dataset.speed) === state.speed);
+}
+
+// The timeline: click to jump, or drag to scrub.
+function initTimelineDrag() {
+  const tl = $('#timeline');
+  const at = e => {
+    const v = video();
+    if (!v || !v.duration) return;
+    const r = tl.getBoundingClientRect();
+    seek(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * v.duration);
+  };
+  tl.addEventListener('pointerdown', e => {
+    tl.setPointerCapture(e.pointerId);
+    at(e);
+    const move = ev => at(ev);
+    const up = () => { tl.removeEventListener('pointermove', move); tl.removeEventListener('pointerup', up); tl.removeEventListener('pointercancel', up); };
+    tl.addEventListener('pointermove', move);
+    tl.addEventListener('pointerup', up);
+    tl.addEventListener('pointercancel', up);
+  });
 }
 
 // ---------- over the picture: turn, pick, full screen ----------
@@ -559,17 +634,22 @@ function renderScenes() {
   const list = $('#sceneList');
   list.replaceChildren();
   it.scenes.forEach((sc, i) => {
+    const sp = sc.speed || 1;
     if (dur) {
       segs.append(el('div', {
-        class: 'seg', title: `Scene ${i + 1}`,
+        class: 'seg' + (sp < 1 ? ' slow' : ''), title: `Scene ${i + 1}` + (sp < 1 ? ` · ${speedLabel(sp)} slow motion` : ''),
         style: `left:${(sc.start / dur) * 100}%;width:${((sc.end - sc.start) / dur) * 100}%`,
-      }));
+      }, sp < 1 ? speedLabel(sp) : null));
     }
-    const len = sc.end - sc.start;
-    list.append(el('li', { onclick: () => seek(sc.start, true) },
-      el('span', { class: 'dot' }),
+    const len = (sc.end - sc.start) / sp; // length in the release
+    const speedSel = el('select', { class: 'scspeed', title: 'Speed of this scene in the release (slow motion)', onclick: e => e.stopPropagation() },
+      ...SPEEDS.map(x => el('option', { value: x, selected: x === sp ? '' : null }, speedLabel(x))));
+    speedSel.addEventListener('change', e => { e.stopPropagation(); setSceneSpeed(i, Number(speedSel.value)); });
+    list.append(el('li', { onclick: () => { setSpeed(sp); seek(sc.start, true); } },
+      el('span', { class: 'dot' + (sp < 1 ? ' slow' : '') }),
       isWholeScene(sc, dur) ? `Whole video   ${fmtTime(sc.start)} → ${fmtTime(sc.end)}` : `Scene ${i + 1}   ${fmtTime(sc.start)} → ${fmtTime(sc.end)}`,
-      el('span', { class: 'len' }, `${len.toFixed(1)} s`),
+      el('span', { class: 'len' }, sp < 1 ? `${(sc.end - sc.start).toFixed(1)} s → ${len.toFixed(1)} s` : `${len.toFixed(1)} s`),
+      speedSel,
       len > STATUS_LIMIT_S ? el('span', { class: 'warn', title: `WhatsApp Status only shows the first ${STATUS_LIMIT_S} s (chats are fine)` }, `⚠ over ${STATUS_LIMIT_S} s`) : null,
       el('button', {
         class: 'del', title: 'Delete scene',
@@ -631,10 +711,11 @@ async function toggleWholeVideo(it) {
     return;
   }
   state.pendingStart = null;
-  await saveScenes(it, [{ start: 0, end: Math.round(dur * 1000) / 1000 }]);
-  toast(dur > STATUS_LIMIT_S
-    ? `Whole video picked (${fmtTime(dur)}); it will be split into pieces of ${STATUS_LIMIT_S} s`
-    : 'Whole video picked');
+  await saveScenes(it, [withSpeed({ start: 0, end: Math.round(dur * 1000) / 1000 })]);
+  const out = dur / state.speed;
+  toast((out > STATUS_LIMIT_S
+    ? `Whole video picked (${fmtTime(out)}); it will be split into pieces of ${STATUS_LIMIT_S} s`
+    : 'Whole video picked') + (state.speed < 1 ? ` · ${speedLabel(state.speed)} slow motion` : ''));
 }
 
 function markIn() {
@@ -654,7 +735,24 @@ async function markOut() {
   const start = state.pendingStart, end = v.currentTime;
   if (end - start < 0.3) { toast('The end must be after the start'); return; }
   state.pendingStart = null;
-  await saveScenes(it, [...it.scenes, { start, end }]);
+  await saveScenes(it, [...it.scenes, withSpeed({ start, end })]);
+  if (state.speed < 1) toast(`Scene saved in ${speedLabel(state.speed)} slow motion`);
+}
+
+// The current speed goes with a new scene (1 = normal, not stored).
+const withSpeed = sc => (state.speed < 1 ? { ...sc, speed: state.speed } : sc);
+
+async function setSceneSpeed(i, speed) {
+  const it = current();
+  const why = pickBlocked(it);
+  if (why) { toast(why); renderScenes(); return; }
+  const scenes = it.scenes.map((sc, j) => {
+    if (j !== i) return sc;
+    const { speed: _, ...rest } = sc;
+    return speed < 1 ? { ...rest, speed } : rest;
+  });
+  setSpeed(speed);
+  await saveScenes(it, scenes);
 }
 
 async function deleteScene(i) {
@@ -756,7 +854,7 @@ function openViewer(what) {
     node = what.canvas;
     showSize(node.width, node.height);
   } else if (what.type === 'video') {
-    node = turnableVideo(what.src, what.rotate || 0);
+    node = turnableVideo(what.src, what.rotate || 0, true);
     node.autoplay = true;
     node.playsInline = true;
     node.addEventListener('loadedmetadata', () => {
@@ -824,8 +922,10 @@ function onKey(e) {
     case 'ArrowRight': if (v) seek(v.currentTime + secs); else select(step(state.sel, 1)); break;
     case 'ArrowLeft': if (v) seek(v.currentTime - secs); else select(step(state.sel, -1)); break;
     case 'c': case 'C': collapseCurrentGroup(); break;
-    case ' ': if (v) { if (v.paused) v.play().catch(() => {}); else v.pause(); } break;
     case 'f': case 'F': toggleFavorite(); break;
+    case ' ': togglePlay(); break;
+    case 's': case 'S': if (v) stepSpeed(e.shiftKey ? -1 : 1); break;
+    case 'm': case 'M': toggleMute(); break;
     case 'i': case 'I': markIn(); break;
     case 'o': case 'O': markOut(); break;
     case 'r': case 'R': rotateCurrent(e.shiftKey ? -1 : 1); break;
@@ -854,12 +954,11 @@ function init() {
   $('#wholeVideo').addEventListener('click', () => { const it = current(); if (it && it.type === 'video') toggleWholeVideo(it); });
   $('#markIn').addEventListener('click', markIn);
   $('#markOut').addEventListener('click', markOut);
-  $('#timeline').addEventListener('click', e => {
-    const v = video();
-    if (!v || !v.duration) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    seek(((e.clientX - r.left) / r.width) * v.duration);
-  });
+  initTimelineDrag();
+  $('#playBtn').addEventListener('click', togglePlay);
+  $('#muteBtn').addEventListener('click', toggleMute);
+  for (const b of document.querySelectorAll('#speedSeg button')) b.addEventListener('click', () => setSpeed(Number(b.dataset.speed)));
+  // Buttons hand the keyboard back to the page.
   window.addEventListener('keydown', onKey, true);
   $('#rotLeft').addEventListener('click', () => rotateCurrent(-1));
   $('#rotRight').addEventListener('click', () => rotateCurrent(1));

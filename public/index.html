@@ -98,6 +98,11 @@
         </div>
         <div id="sceneBar">
           <button id="wholeVideo" title="Pick the whole video, like a photo (F again to unpick)">F · Whole video</button>
+          <button id="playBtn" title="Play / pause (Space)">▶</button>
+          <button id="muteBtn" title="Sound on / off (M)">🔊</button>
+          <span id="speedSeg" class="seg" title="Speed (S slower · Shift+S faster). New scenes get this speed: slow motion in the release too.">
+            <button data-speed="1" class="on">1×</button><button data-speed="0.75">¾×</button><button data-speed="0.5">½×</button><button data-speed="0.25">¼×</button>
+          </span>
           <button id="markIn">I · Scene start</button>
           <button id="markOut">O · Scene end</button>
           <span id="pendingInfo"></span>

@@ -54,7 +54,8 @@ const pad2 = n => String(n).padStart(2, '0');
 const newPostId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const imgKey = name => `img:${name}`;
 const sceneKey = (name, sc) => `vid:${name}@${sc.start.toFixed(2)}-${sc.end.toFixed(2)}`;
-const postLen = e => (e.type === 'video' ? e.end - e.start : 0);
+// Length in the release: a slow-motion scene (speed < 1) gets longer.
+const postLen = e => (e.type === 'video' ? (e.end - e.start) / (e.speed || 1) : 0);
 const curEntry = () => posts.entries.find(e => e.key === posts.selKey) || null;
 const exportEntries = () => posts.entries.filter(e => !e.removed);
 // Removed posts are only shown with "Show removed".
@@ -132,6 +133,7 @@ function releaseChanges(item, e = entryFor(item.postKey || item.key)) {
     picture = item.format !== 'original';  // an old file with a blurred background
   }
   if (e.kind === 'media' && (item.rotate || 0) !== rotOf(e.source)) picture = true; // turned since
+  if (e.type === 'video' && (item.speed || 1) !== (e.speed || 1)) picture = true;    // speed changed
   if (picture) out.push('picture');
   return out.length ? out : null;
 }
@@ -192,7 +194,7 @@ function buildEntries() {
     } else if (it.type === 'video') {
       it.scenes.forEach((sc, i) => media.push({
         kind: 'media', type: 'video', key: sceneKey(it.name, sc), source: it.name, item: it,
-        start: sc.start, end: sc.end, sceneNo: i + 1, time: addSeconds(it.date, sc.start),
+        start: sc.start, end: sc.end, speed: sc.speed || 1, sceneNo: i + 1, time: addSeconds(it.date, sc.start),
       }));
     }
   }
@@ -843,7 +845,7 @@ function renderCard(e, num, row = null) {
   }
   const piece = row && row.item.piece;
   if (e.type === 'video') {
-    const len = piece ? row.item.end - row.item.start : postLen(e);
+    const len = piece ? (row.item.end - row.item.start) / (row.item.speed || 1) : postLen(e);
     frame.append(el('span', { class: 'badge' }, `🎬 ${len.toFixed(1)} s` + (piece ? ` · ${piece}` : '')));
   }
   if (!row && postLen(e) > STATUS_LIMIT_S) frame.append(el('span', { class: 'badge right', title: `WhatsApp Status only shows the first ${STATUS_LIMIT_S} s` }, '⏱'));
@@ -1014,7 +1016,8 @@ function renderEditor() {
   $('#pRemove').textContent = e.type === 'text' ? '🗑 Delete text post' : e.removed ? '↩ Restore post' : '✕ Remove post';
   const info = [];
   if (e.type === 'video') {
-    info.push(`Scene ${e.sceneNo} of ${e.source}: ${fmtTime(e.start)} → ${fmtTime(e.end)} (${postLen(e).toFixed(1)} s).`);
+    info.push(`Scene ${e.sceneNo} of ${e.source}: ${fmtTime(e.start)} → ${fmtTime(e.end)} (${postLen(e).toFixed(1)} s` +
+      ((e.speed || 1) < 1 ? `, ${{ 0.75: '¾', 0.5: '½', 0.25: '¼' }[e.speed]}× slow motion).` : ').'));
     if (postLen(e) > STATUS_LIMIT_S) info.push(`⚠ Longer than ${STATUS_LIMIT_S} s: WhatsApp Status only shows the first ${STATUS_LIMIT_S} s.`);
   }
   if (e.type === 'image') info.push(`Photo ${e.source}.`);
@@ -1510,6 +1513,9 @@ async function loadPostMedia() {
     v.src = '/preview?name=' + encodeURIComponent(e.source);
   });
   v.rot = rotOf(e.source);
+  v.defaultPlaybackRate = e.speed || 1;
+  v.preservesPitch = true;
+  v.addEventListener('loadedmetadata', () => { v.playbackRate = e.speed || 1; }, { once: true });
   posts.media = v;
   v.src = mediaUrl({ name: e.source });
 }
@@ -1519,6 +1525,7 @@ function togglePostPlay() {
   if (!(v instanceof HTMLVideoElement) || !e || e.type !== 'video') return;
   if (v.paused) {
     if (v.currentTime < e.start - 0.05 || v.currentTime >= e.end - 0.05) v.currentTime = e.start;
+    v.playbackRate = e.speed || 1;
     v.play().catch(() => {});
     postLoop();
   } else {
@@ -1548,7 +1555,7 @@ function updatePlayBar() {
   if (!isVideo) return;
   const v = posts.media instanceof HTMLVideoElement ? posts.media : null;
   $('#postPlay').textContent = v && !v.paused ? '❚❚ Pause' : '▶ Play';
-  const t = v ? Math.min(Math.max(0, v.currentTime - e.start), postLen(e)) : 0;
+  const t = v ? Math.min(Math.max(0, (v.currentTime - e.start) / (e.speed || 1)), postLen(e)) : 0;
   $('#postTime').textContent = `${fmtTime(t)} / ${fmtTime(postLen(e))}`;
 }
 
@@ -1677,7 +1684,7 @@ function releaseItems(list) {
     const v = postView(e);
     if (e.type === 'video' && postLen(e) > L.maxVideoSeconds) {
       const k = Math.ceil(postLen(e) / L.maxVideoSeconds);
-      const seg = postLen(e) / k;
+      const seg = (e.end - e.start) / k; // in the original video's time
       for (let i = 0; i < k; i++) {
         items.push({ e, v, start: e.start + i * seg, end: e.start + (i + 1) * seg, piece: `${i + 1}/${k}`, caption: i === 0 ? fullCaption(e, v) : '' });
       }
@@ -1813,7 +1820,7 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
   let reused = false;
   if (e.type === 'video') {
     file += '.mp4';
-    const res = await exportVideoPost({ ...where, file, source: e.source, start: it.start, end: it.end, reuseBase: reuse ? base : undefined });
+    const res = await exportVideoPost({ ...where, file, source: e.source, start: it.start, end: it.end, speed: e.speed || 1, reuseBase: reuse ? base : undefined });
     reused = !!(res && res.reused);
   } else if (e.type === 'image') {
     // The photo unchanged if it is a JPEG within the size limit, otherwise
@@ -1859,6 +1866,7 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
     start: e.type === 'video' ? Math.round(it.start * 1000) / 1000 : undefined,
     end: e.type === 'video' ? Math.round(it.end * 1000) / 1000 : undefined,
     piece: it.piece || undefined,
+    speed: e.type === 'video' && (e.speed || 1) < 1 ? e.speed : undefined,
     caption: it.caption,
     text: e.type === 'text' ? v.text.trim() : undefined,
     bg: e.type === 'text' ? v.bg : undefined,

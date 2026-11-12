@@ -562,3 +562,23 @@ body.focus #infoBar { color: rgba(255, 255, 255, .6); border-top-color: rgba(255
 .fthumb .fvid, .fthumb .ftick { position: absolute; z-index: 1; font-size: 10px; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .9); }
 .fthumb .fvid { left: 5px; bottom: 3px; }
 .fthumb .ftick { right: 4px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink); display: grid; place-items: center; text-shadow: none; }
+
+.tile .tmeta { right: 30px; }
+/* ---------- video controls and slow motion ---------- */
+#sceneBar { flex-wrap: wrap; }
+#playBtn { min-width: 44px; }
+#muteBtn { min-width: 40px; padding-left: 8px; padding-right: 8px; }
+#speedSeg { padding: 2px; }
+#speedSeg button { padding: 4px 9px; font-size: 12.5px; }
+#timeline { touch-action: none; }
+#tlScenes .seg { display: flex; align-items: center; justify-content: center; overflow: hidden; color: #fff; font-size: 10.5px; font-weight: 800; }
+#tlScenes .seg.slow { background: repeating-linear-gradient(135deg, var(--scene) 0 6px, #237a5e 6px 12px); }
+#sceneList .dot.slow { background: #237a5e; box-shadow: 0 0 0 2px rgba(47, 159, 122, .35); }
+#sceneList .scspeed { font-size: 12px; padding: 1px 4px; border-radius: 8px; }
+body.focus #speedSeg { background: rgba(255, 255, 255, .08); }
+body.focus #speedSeg button { background: transparent; border-color: transparent; }
+body.focus #speedSeg button.on { background: #fff; color: var(--ink); }
+body.focus #sceneList .scspeed { background: rgba(255, 255, 255, .1); color: #fff; border-color: rgba(255, 255, 255, .2); }
+body.focus #sceneList .scspeed option { color: #000; }
+/* ---------- header: only Releases; inside the release being made, its two steps ---------- */
+.stepnav button.on .heart { color: #e23d5d; }
