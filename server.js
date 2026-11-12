@@ -332,15 +332,24 @@ async function readScenes(videoFile) {
   try {
     const j = JSON.parse(await fsp.readFile(videoFile + CUTS_SUFFIX, 'utf8'));
     return (Array.isArray(j.scenes) ? j.scenes : [])
-      .filter(s => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start);
+      .filter(s => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start)
+      .map(s => (cleanSpeed(s.speed) < 1 ? { start: s.start, end: s.end, speed: cleanSpeed(s.speed) } : { start: s.start, end: s.end }));
   } catch {
     return [];
   }
 }
 
+// Slow motion: a scene can play at 3/4, 1/2 or 1/4 speed (1 = normal, not stored).
+const SPEEDS = [1, 0.75, 0.5, 0.25];
+const cleanSpeed = v => (SPEEDS.includes(Number(v)) ? Number(v) : 1);
+
 async function writeScenes(videoFile, scenes) {
   const clean = scenes
-    .map(s => ({ start: Math.round(+s.start * 1000) / 1000, end: Math.round(+s.end * 1000) / 1000 }))
+    .map(s => {
+      const sc = { start: Math.round(+s.start * 1000) / 1000, end: Math.round(+s.end * 1000) / 1000 };
+      if (cleanSpeed(s.speed) < 1) sc.speed = cleanSpeed(s.speed);
+      return sc;
+    })
     .filter(s => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start)
     .sort((a, b) => a.start - b.start);
   if (clean.length === 0) await fsp.rm(videoFile + CUTS_SUFFIX, { force: true });
@@ -847,6 +856,14 @@ function statusFile(body, name, ext) {
   return path.join(outDir(body), n);
 }
 
+async function hasAudio(file) {
+  const ffprobe = tool('ffprobe');
+  if (!ffprobe) return false;
+  try {
+    return (await run(ffprobe, ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', file])).trim() !== '';
+  } catch { return false; }
+}
+
 async function probeFile(file) {
   const ffprobe = tool('ffprobe');
   const st = await fsp.stat(file);
@@ -959,12 +976,23 @@ function videoBitrateK(seconds, limits) {
 // The scene in its original format; WhatsApp fits it to the screen.
 const TURN_FILTER = { 90: 'transpose=1,', 180: 'hflip,vflip,', 270: 'transpose=2,' };
 
-function statusVideoArgs(src, start, end, out, limits, kbps, rotate = 0) {
+// atempo works between 0.5 and 2, so 1/4 speed is two steps of 1/2.
+const ATEMPO = { 0.75: 'atempo=0.75', 0.5: 'atempo=0.5', 0.25: 'atempo=0.5,atempo=0.5' };
+
+function statusVideoArgs(src, start, end, out, limits, kbps, rotate = 0, speed = 1, audio = true) {
   const side = limits.maxVideoSide;
   const keep = `scale='min(iw,${side})':'min(ih,${side})':force_original_aspect_ratio=decrease:force_divisible_by=2`;
+  const slow = speed < 1 ? `setpts=PTS/${speed},` : '';
+  let graph = `[0:v]${TURN_FILTER[rotate] || ''}${slow}${keep},setsar=1,format=yuv420p[v]`;
+  let audioMap = ['-map', '0:a:0?'];
+  // Slowed down: the sound is stretched too (same pitch), so it stays in sync.
+  if (speed < 1 && audio) {
+    graph += `;[0:a:0]${ATEMPO[speed]}[a]`;
+    audioMap = ['-map', '[a]'];
+  }
   return ['-y', '-v', 'error', '-ss', String(start), '-t', String(end - start), '-i', src,
-    '-filter_complex', `[0:v]${TURN_FILTER[rotate] || ''}${keep},setsar=1,format=yuv420p[v]`,
-    '-map', '[v]', '-map', '0:a:0?', '-map_metadata', '0',
+    '-filter_complex', graph,
+    '-map', '[v]', ...audioMap, '-map_metadata', '0',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`,
     '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', out];
 }
@@ -1487,11 +1515,14 @@ const routes = {
     const limits = releaseLimits();
     // The turn comes from the folder's own list, not from the page.
     const rotate = (await readRotations(currentFolder))[path.basename(src)] || 0;
+    const speed = cleanSpeed(body.speed);
+    const seconds = (end - start) / speed; // length of the finished clip
+    const audio = speed < 1 ? await hasAudio(src) : true;
     (async () => {
       try {
         // Already rendered earlier and within the limits: copy instead of rendering again
         // (not for turned videos: an older clip may not be turned the same way).
-        const reuse = body.reuseBase && !rotate ? await findReusableVideo(String(body.reuseBase), end - start, limits) : null;
+        const reuse = body.reuseBase && !rotate && speed === 1 ? await findReusableVideo(String(body.reuseBase), seconds, limits) : null;
         if (reuse) {
           await fsp.copyFile(reuse, out);
           job.reused = path.relative(currentFolder, reuse);
@@ -1499,9 +1530,9 @@ const routes = {
         }
         // Encode, then check the size; if a clip still ends up too big, try again
         // with a lower bitrate.
-        let kbps = videoBitrateK(end - start, limits);
+        let kbps = videoBitrateK(seconds, limits);
         for (let attempt = 1; ; attempt++) {
-          await run(ffmpeg, statusVideoArgs(src, start, end, out, limits, kbps, rotate));
+          await run(ffmpeg, statusVideoArgs(src, start, end, out, limits, kbps, rotate, speed, audio));
           const size = (await fsp.stat(out)).size;
           if (size <= limits.maxVideoMB * MB_BYTES) break;
           if (attempt >= 3) throw new Error(`still ${(size / MB_BYTES).toFixed(1)} MB after 3 tries (limit ${limits.maxVideoMB} MB)`);
