@@ -589,6 +589,8 @@ body.focus #speedSeg button { background: transparent; border-color: transparent
 body.focus #speedSeg button.on { background: #fff; color: var(--ink); }
 body.focus #sceneList .scspeed { background: rgba(255, 255, 255, .1); color: #fff; border-color: rgba(255, 255, 255, .2); }
 body.focus #sceneList .scspeed option { color: #000; }
+body.focus #help { display: none; }
+
 /* ---------- header: only Releases; inside the release being made, its two steps ---------- */
 .stepnav .in-release { display: none; }
 body.in-draft .stepnav .in-release { display: inline-flex; }
