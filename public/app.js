@@ -14,6 +14,7 @@ const state = {
   pendingStart: null,
   collapsed: new Set(), // "day:2026-07-12", saved per folder
   focus: false,      // full screen view of the selected file (Pick)
+  lovedOnly: false,  // gallery shows only ♥ favorites
   speed: 1,          // playback speed in Pick; new scenes get it (slow motion)
   muted: false,
 };
@@ -82,7 +83,8 @@ const current = () => state.view[state.sel] || null;
 const isMarked = it => (it.type === 'image' ? it.favorite : it.scenes.length > 0);
 
 const collapseKey = it => `day:${groupKey(it)}`;
-const isHidden = it => state.collapsed.has(collapseKey(it));
+// In the favorites view every day is open: it only holds favorites anyway.
+const isHidden = it => !state.lovedOnly && state.collapsed.has(collapseKey(it));
 
 // Next visible index from `from` in direction `dir` (+1 / -1), or -1 if none.
 function step(from, dir) {
@@ -109,7 +111,7 @@ function ensureVisibleSelection() {
 
 function buildView() {
   const keep = current();
-  state.view = state.items.slice().sort((a, b) => {
+  state.view = state.items.filter(it => !state.lovedOnly || it.loved).sort((a, b) => {
     if (!a.date !== !b.date) return a.date ? -1 : 1; // undated files always last
     return (a.date || '').localeCompare(b.date || '') || a.name.localeCompare(b.name, undefined, { numeric: true });
   });
@@ -161,8 +163,13 @@ function renderList() {
     list.append(el('div', { class: 'list-empty' }, 'No journey open.'));
     return;
   }
+  const nLoved = state.items.filter(it => it.loved).length;
+  $('#lovedCount').textContent = nLoved ? `(${nLoved})` : '';
   if (!state.view.length) {
-    list.append(el('div', { class: 'list-empty' }, 'No photos or videos in this folder.'));
+    list.append(el('div', { class: 'list-empty' }, state.lovedOnly
+      ? 'No favorites yet. Press F (or ♡ over the picture) to make a photo or video a favorite.'
+      : 'No photos or videos in this folder.'));
+    renderPickBar();
     return;
   }
   const released = releasedFiles();
@@ -176,7 +183,7 @@ function renderList() {
   state.view.forEach((it, i) => {
     const key = groupKey(it);
     if (key !== lastKey) {
-      list.append(renderGroupHeader(key, stats[key], state.collapsed.has(collapseKey(it)), collapseKey(it)));
+      list.append(renderGroupHeader(key, stats[key], isHidden(it), state.lovedOnly ? null : collapseKey(it)));
       grid = el('div', { class: 'pgrid' });
       list.append(grid);
       lastKey = key;
@@ -194,7 +201,7 @@ function renderGroupHeader(key, s, closed, ckey) {
   if (s.sent) facts.push(`${s.sent} sent`);
   return el('div', {
     class: 'group' + (closed ? ' closed' : '') + (s.sent === s.count ? ' all-sent' : ''),
-    title: closed ? 'Click to expand' : 'Click to collapse (C)',
+    title: !ckey ? '' : closed ? 'Click to expand' : 'Click to collapse (C)',
     onclick: () => toggleGroup(ckey),
   },
   el('span', { class: 'chev' }, ic(closed ? 'right' : 'down')),
@@ -224,6 +231,7 @@ function renderTile(it, i, released = releasedFiles()) {
     it.type === 'video' ? el('span', { class: 'tvid' }, ic('play'), it.duration ? fmtTime(it.duration).replace(/\.\d$/, '') : '') : null,
     badge,
     st.state === 'picked' ? el('span', { class: 'ttick' }, ic('check')) : null,
+    it.loved ? el('span', { class: 'theart', title: 'Favorite' }, '♥') : null,
     el('div', { class: 'tmeta' },
       el('b', { class: 'time' }, time,
         it.dateSource === 'file' ? el('span', { class: 'approx', title: 'No capture date in the file. Using the date it was last changed.' }, ' ≈') : null),
@@ -344,6 +352,7 @@ function renderViewer() {
   if (state.focus) renderFilmstrip();
   if (!it) {
     const msg = !state.folder ? 'Choose a journey to start.'
+      : state.lovedOnly && !state.view.length ? 'No favorites yet.'
       : state.view.length ? 'All days are collapsed. Click a day to open it.' : 'Nothing to show.';
     stage.append(el('div', { class: 'empty' }, msg));
     $('#infoBar').textContent = '';
@@ -501,6 +510,45 @@ function initTimelineDrag() {
   });
 }
 
+// ---------- favorites (♥, F): kept apart from picking for a release (P) ----------
+
+async function toggleLoved() {
+  const it = current();
+  if (!it) return;
+  const value = !it.loved;
+  const set = v => {
+    it.loved = v;
+    if (state.lovedOnly && !v) { buildView(); renderList(); renderViewer(); return; }
+    refreshRow(state.sel);
+    renderStageTools();
+    if (state.focus) renderFilmstrip();
+    $('#lovedCount').textContent = state.items.some(x => x.loved) ? `(${state.items.filter(x => x.loved).length})` : '';
+  };
+  set(value);
+  toast(value ? '♥ Added to your favorites' : 'Removed from your favorites');
+  try {
+    await api('/api/love', { name: it.name, value });
+  } catch (err) {
+    set(!value);
+    toast('Could not save: ' + err.message);
+  }
+}
+
+function setLovedOnly(on) {
+  if (state.lovedOnly === on) return;
+  const before = current();
+  state.lovedOnly = on;
+  $('#showAll').classList.toggle('on', !on);
+  $('#showLoved').classList.toggle('on', on);
+  buildView();
+  if (before && state.view.includes(before)) state.sel = state.view.indexOf(before);
+  ensureVisibleSelection();
+  renderList();
+  $('#list').scrollTop = 0;
+  scrollSelIntoView();
+  if (current() !== before) renderViewer(); else renderStageTools();
+}
+
 // ---------- over the picture: turn, pick, full screen ----------
 
 function renderStageTools() {
@@ -510,6 +558,10 @@ function renderStageTools() {
   if (!it) return;
   $('#navPrev').disabled = step(state.sel, -1) < 0;
   $('#navNext').disabled = step(state.sel, 1) < 0;
+  const love = $('#loveBtn');
+  love.textContent = it.loved ? '♥' : '♡';
+  love.classList.toggle('on', !!it.loved);
+  love.title = it.loved ? 'Favorite · F to remove it from your favorites' : 'Make it a favorite (F)';
   const pick = $('#pickBtn');
   pick.hidden = it.type !== 'image';
   pick.textContent = it.favorite ? '★ Picked' : '☆ Pick';
@@ -585,7 +637,8 @@ function renderFilmstrip() {
     },
     el('img', { src: thumbSrc(it), loading: 'lazy', decoding: 'async', alt: '', class: rotClass(it.rotate).trim() || null }),
     it.type === 'video' ? el('span', { class: 'fvid' }, '▶') : null,
-    st.state === 'picked' ? el('span', { class: 'ftick' }, '✓') : null);
+    st.state === 'picked' ? el('span', { class: 'ftick' }, '✓') : null,
+    it.loved ? el('span', { class: 'fheart' }, '♥') : null);
   }));
   const sel = strip.querySelector('.sel');
   if (sel) sel.scrollIntoView({ block: 'nearest', inline: 'center' });
@@ -922,10 +975,11 @@ function onKey(e) {
     case 'ArrowRight': if (v) seek(v.currentTime + secs); else select(step(state.sel, 1)); break;
     case 'ArrowLeft': if (v) seek(v.currentTime - secs); else select(step(state.sel, -1)); break;
     case 'c': case 'C': collapseCurrentGroup(); break;
-    case 'f': case 'F': toggleFavorite(); break;
     case ' ': togglePlay(); break;
     case 's': case 'S': if (v) stepSpeed(e.shiftKey ? -1 : 1); break;
     case 'm': case 'M': toggleMute(); break;
+    case 'f': case 'F': toggleLoved(); break;
+    case 'p': case 'P': toggleFavorite(); break; // pick for the release
     case 'i': case 'I': markIn(); break;
     case 'o': case 'O': markOut(); break;
     case 'r': case 'R': rotateCurrent(e.shiftKey ? -1 : 1); break;
@@ -958,7 +1012,11 @@ function init() {
   $('#playBtn').addEventListener('click', togglePlay);
   $('#muteBtn').addEventListener('click', toggleMute);
   for (const b of document.querySelectorAll('#speedSeg button')) b.addEventListener('click', () => setSpeed(Number(b.dataset.speed)));
+  $('#loveBtn').addEventListener('click', toggleLoved);
+  $('#showAll').addEventListener('click', () => setLovedOnly(false));
+  $('#showLoved').addEventListener('click', () => setLovedOnly(true));
   // Buttons hand the keyboard back to the page.
+  for (const b of document.querySelectorAll('#sceneBar button, #listBar button')) b.addEventListener('pointerup', () => setTimeout(() => b.blur(), 0));
   window.addEventListener('keydown', onKey, true);
   $('#rotLeft').addEventListener('click', () => rotateCurrent(-1));
   $('#rotRight').addEventListener('click', () => rotateCurrent(1));
@@ -967,7 +1025,7 @@ function init() {
   $('#navPrev').addEventListener('click', () => select(step(state.sel, -1)));
   $('#navNext').addEventListener('click', () => select(step(state.sel, 1)));
   // Buttons hand the keyboard back to the page, so I / O / Space work right after a click.
-  for (const id of ['rotLeft', 'rotRight', 'pickBtn', 'focusBtn', 'navPrev', 'navNext']) {
+  for (const id of ['rotLeft', 'rotRight', 'loveBtn', 'pickBtn', 'focusBtn', 'navPrev', 'navNext']) {
     const b = $('#' + id);
     b.addEventListener('pointerup', () => setTimeout(() => b.blur(), 0));
   }

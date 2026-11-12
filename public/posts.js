@@ -645,7 +645,7 @@ function startDraft() {
   if (!hasDraft()) {
     posts.data.draft = { created: nowStamp() };
     savePosts();
-    toast(`${draftTitle()} started. Pick photos (F) and scenes (I / O) for it.`);
+    toast(`${draftTitle()} started. Pick photos (P) and scenes (I / O) for it.`);
   }
   setMode('pick');
 }
@@ -709,7 +709,7 @@ function newSection() {
     }, ic('package'), 'Create release'),
   ], grid => {
     if (!list.length) {
-      grid.append(el('div', { class: 'gempty' }, 'Nothing picked yet. Pick photos (F) and scenes (I / O) for this release in Pick.'));
+      grid.append(el('div', { class: 'gempty' }, 'Nothing picked yet. Pick photos (P) and scenes (I / O) for this release in Pick.'));
     }
     grid.append(slotCard('＋ Text at the beginning', () => insertTextPost(null, 0)));
     const numbers = new Map();

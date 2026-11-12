@@ -74,6 +74,10 @@
   <main id="pickView">
     <div id="pickCol">
       <div id="pickBar"></div>
+      <div id="listBar" class="seg">
+        <button id="showAll" class="on" title="Every photo and video of the journey">All files</button>
+        <button id="showLoved" title="Only your favorites (F marks one), all days">♥ Favorites <span id="lovedCount"></span></button>
+      </div>
       <aside id="list" tabindex="-1"></aside>
     </div>
     <section id="viewer">
@@ -86,7 +90,8 @@
           <span id="focusName" class="focus-only"></span>
           <button id="rotLeft" title="Turn 90° to the left (Shift+R)">⟲</button>
           <button id="rotRight" title="Turn 90° to the right (R)">⟳</button>
-          <button id="pickBtn" title="Pick this photo (F)">☆ Pick</button>
+          <button id="loveBtn" title="Favorite (F): keep it among your favorites, picked or not">♡</button>
+          <button id="pickBtn" title="Pick this photo for the release (P)">☆ Pick</button>
           <button id="focusBtn" title="Full screen (Enter) · Esc to leave">⛶</button>
         </div>
       </div>
@@ -97,12 +102,12 @@
           <div id="tlHead"></div>
         </div>
         <div id="sceneBar">
-          <button id="wholeVideo" title="Pick the whole video, like a photo (F again to unpick)">F · Whole video</button>
           <button id="playBtn" title="Play / pause (Space)">▶</button>
           <button id="muteBtn" title="Sound on / off (M)">🔊</button>
           <span id="speedSeg" class="seg" title="Speed (S slower · Shift+S faster). New scenes get this speed: slow motion in the release too.">
             <button data-speed="1" class="on">1×</button><button data-speed="0.75">¾×</button><button data-speed="0.5">½×</button><button data-speed="0.25">¼×</button>
           </span>
+          <button id="wholeVideo" title="Pick the whole video, like a photo (P again to unpick)">P · Whole video</button>
           <button id="markIn">I · Scene start</button>
           <button id="markOut">O · Scene end</button>
           <span id="pendingInfo"></span>

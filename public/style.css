@@ -563,7 +563,16 @@ body.focus #infoBar { color: rgba(255, 255, 255, .6); border-top-color: rgba(255
 .fthumb .fvid { left: 5px; bottom: 3px; }
 .fthumb .ftick { right: 4px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink); display: grid; place-items: center; text-shadow: none; }
 
+/* ---------- ♥ favorites ---------- */
+#listBar { margin: 12px 14px 0; flex: none; }
+#listBar button { font-size: 12.5px; padding: 4px 12px; }
+#lovedCount { color: var(--muted); font-weight: 500; }
+.theart { position: absolute; right: 9px; bottom: 7px; z-index: 2; color: #ff5c7a; font-size: 17px; line-height: 1; text-shadow: 0 1px 4px rgba(0, 0, 0, .6); }
 .tile .tmeta { right: 30px; }
+.fthumb .fheart { position: absolute; z-index: 1; right: 4px; bottom: 2px; color: #ff5c7a; font-size: 12px; text-shadow: 0 1px 3px rgba(0, 0, 0, .9); }
+#stageTools #loveBtn { width: 36px; padding: 5px 0; font-size: 17px; }
+#stageTools #loveBtn.on { background: #fff; color: #e23d5d; }
+
 /* ---------- video controls and slow motion ---------- */
 #sceneBar { flex-wrap: wrap; }
 #playBtn { min-width: 44px; }
@@ -581,4 +590,5 @@ body.focus #speedSeg button.on { background: #fff; color: var(--ink); }
 body.focus #sceneList .scspeed { background: rgba(255, 255, 255, .1); color: #fff; border-color: rgba(255, 255, 255, .2); }
 body.focus #sceneList .scspeed option { color: #000; }
 /* ---------- header: only Releases; inside the release being made, its two steps ---------- */
+/* ---------- Favorites (♥ at the top right): the Pick view without picking ---------- */
 .stepnav button.on .heart { color: #e23d5d; }
