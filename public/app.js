@@ -510,6 +510,36 @@ function initTimelineDrag() {
   });
 }
 
+// ---------- where the next release starts ----------
+// The oldest day after the newest day that has files in a release: releases follow
+// the trip, so that's where picking goes on. The day is opened if it was collapsed,
+// its first file selected and its heading scrolled to the top.
+function jumpToNewDays() {
+  if (state.lovedOnly || !state.view.length) return;
+  const released = releasedFiles();
+  let last = null;
+  for (const it of state.view) {
+    const k = groupKey(it);
+    if (k !== 'unknown' && released.has(it.name) && (!last || k > last)) last = k;
+  }
+  const target = state.view.findIndex(it => {
+    const k = groupKey(it);
+    return k !== 'unknown' && (!last || k > last) && !released.has(it.name);
+  });
+  if (target < 0) return;
+  const ckey = collapseKey(state.view[target]);
+  if (state.collapsed.has(ckey)) state.collapsed.delete(ckey);
+  const changed = target !== state.sel;
+  state.sel = target;
+  state.pendingStart = null;
+  renderList();
+  if (changed) renderViewer();
+  saveView();
+  const tile = $(`#list .tile[data-i="${target}"]`);
+  const head = tile && tile.parentElement && tile.parentElement.previousElementSibling;
+  if (head) head.scrollIntoView({ block: 'start' });
+}
+
 // ---------- favorites (♥, F): kept apart from picking for a release (P) ----------
 
 async function toggleLoved() {

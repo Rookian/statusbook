@@ -2253,6 +2253,7 @@ function lastStep() {
 function setMode(mode, force = false) {
   if (state.mode === mode && !force) return;
   const wasPosts = inPostsView();
+  const cameFrom = state.mode;
   state.mode = mode;
   for (const m of MODES) {
     document.body.classList.toggle(`mode-${m}`, m === mode);
@@ -2271,6 +2272,12 @@ function setMode(mode, force = false) {
     // Only posts of this view can stay selected.
     if (mode === 'arrange' && posts.selKey && !isNew({ key: posts.selKey })) posts.selKey = null;
     refreshPosts();
+    // Back to the release being made: start at its first (oldest) post, at the top.
+    if (mode === 'arrange' && cameFrom !== 'arrange') {
+      const first = $('#gallery .card[data-key]:not(.slot):not(.rel)');
+      if (first) selectEntry(first.dataset.key);
+      $('#gallery').scrollTop = 0;
+    }
     // A publish that is still running (e.g. after reloading the page): show its progress again.
     api('/api/publish/status').then(st => {
       if (st.job && st.job.running) { renderPublishPanel(st.job); watchPublish(); }
