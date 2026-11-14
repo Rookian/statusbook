@@ -35,7 +35,7 @@ const posts = {
   selKey: null,
   showRemoved: false,
   releases: [],      // from the release folders (WhatsApp\Releases), see server.js
-  limits: { maxVideoSeconds: 90, maxVideoMB: 9.9, maxVideoSide: 1920, maxImageSide: 2560 },
+  limits: { maxVideoSeconds: 90, maxVideoMB: 9.9, maxVideoSide: 1920, maxVideoShort: 720, maxImageSide: 2560 },
   media: null,      // loaded <img> or <video> for the selected post
   mediaKey: null,
   raf: 0,
@@ -2040,7 +2040,7 @@ function updatePostsExportInfo() {
     warn.append(el('li', {}, `Left out: the day intro for ${empty.map(it => germanDay(itemDay(it))).join(', ')}, because nothing of that day follows it in this release.`));
   }
   warn.append(el('li', { style: 'color: var(--muted)' },
-    `Within WhatsApp's limits: videos MP4, at most ${L.maxVideoSide >= 1920 ? '1080p' : `${L.maxVideoSide} px`}, ${L.maxVideoMB} MB and ${L.maxVideoSeconds} s; photos at most ${L.maxImageSide} px.`));
+    `Within WhatsApp's limits: videos MP4, at most ${L.maxVideoShort || 720}p and 30 fps, ${L.maxVideoMB} MB and ${L.maxVideoSeconds} s; photos at most ${L.maxImageSide} px.`));
   warn.append(el('li', { style: 'color: var(--muted)' }, `The spelling of captions and texts is checked when you click Publish.` +
     (captions ? ` Files and captions are kept in WhatsApp\\Releases\\${name}.` : '')));
 }

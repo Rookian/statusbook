@@ -181,7 +181,7 @@ WhatsApp\Releases\2026-10-26 release 1\
   day without an intro of its own gets a plain one (date and map). A day intro with
   nothing of its day after it in the release is left out. The release dialog lists all
   of this before you start.
-- **Limits:** videos MP4 (H.264), at most 1080p, 9.9 MB and 90 s; longer scenes are split
+- **Limits:** videos MP4 (H.264), at most 720p and 30 fps, 9.9 MB and 90 s; longer scenes are split
   into pieces (`…_1of2`, `…_2of2`); photos at most 2560 px (bigger ones are scaled down,
   smaller JPEGs are copied unchanged). The values can be changed with `"releaseLimits"`
   in `settings.json`.

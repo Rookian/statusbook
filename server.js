@@ -1112,7 +1112,8 @@ const PART_RE = /^part (\d{1,3}) of (\d{1,3})$/;
 const DEFAULT_LIMITS = {
   maxVideoSeconds: 90,   // Status shows only the first 90 s
   maxVideoMB: 9.9,       // WhatsApp Web takes Status videos up to about 10 MB (tested); see MB_BYTES
-  maxVideoSide: 1920,    // 1080p; Status has no HD
+  maxVideoSide: 1920,    // longest side of very wide or tall videos
+  maxVideoShort: 720,    // 720p: WhatsApp shows Status videos at most at 720p (no HD for status)
   maxImageSide: 2560,    // longest side of photos
 };
 const releaseLimits = () => ({ ...DEFAULT_LIMITS, ...(loadSettings().releaseLimits || {}) });
@@ -1245,6 +1246,7 @@ async function findReusableVideo(base, seconds, limits) {
           const info = await probeFile(file);
           const fits = info.codec === 'h264' && info.size <= limits.maxVideoMB * MB_BYTES &&
             Math.max(info.width || 1e9, info.height || 1e9) <= limits.maxVideoSide &&
+            Math.min(info.width || 1e9, info.height || 1e9) <= (limits.maxVideoShort || 1e9) &&
             info.duration && Math.abs(info.duration - seconds) < 0.3;
           if (fits) return file;
         }
@@ -1263,7 +1265,7 @@ function dataUrlBuffer(dataUrl, mime) {
 }
 
 // Highest video bitrate (kbit/s) that keeps a clip of this length under the size
-// limit, leaving room for audio; capped at 8 Mbit/s, which is plenty for 1080p.
+// limit, leaving room for audio; capped at 8 Mbit/s, which is plenty for 720p.
 function videoBitrateK(seconds, limits) {
   const bits = limits.maxVideoMB * MB_BYTES * 8 * 0.92;
   return Math.max(500, Math.min(8000, Math.floor(bits / 1000 / Math.max(1, seconds)) - 160));
@@ -1277,16 +1279,16 @@ const TURN_FILTER = { 90: 'transpose=1,', 180: 'hflip,vflip,', 270: 'transpose=2
 // atempo works between 0.5 and 2, so 1/4 speed is two steps of 1/2.
 const ATEMPO = { 0.75: 'atempo=0.75', 0.5: 'atempo=0.5', 0.25: 'atempo=0.5,atempo=0.5' };
 
-// Few bits per second look better on fewer pixels: under 6 Mbit/s the shorter side is
-// at most 1080 px, under 2.5 Mbit/s at most 720 px.
-const shortSideFor = kbps => (kbps < 2500 ? 720 : kbps < 6000 ? 1080 : 0);
+// The shorter side is at most 720 px (maxVideoShort): WhatsApp has no HD for Status,
+// so more pixels would only cost bits. Under 1.2 Mbit/s it is 480 px.
+const shortSideFor = (kbps, limits) => (kbps < 1200 ? Math.min(480, limits.maxVideoShort || 480) : limits.maxVideoShort || 0);
 
 // The picture part of a status video: turned, cropped, slowed down, at most 30 frames
 // per second (60 fps costs twice the bits for little gain on a phone), scaled down.
 // fps: frame rate of the original, if known.
 function statusVideoFilter(limits, kbps, rotate, speed, crop, fps) {
   const side = limits.maxVideoSide;
-  const short = shortSideFor(kbps);
+  const short = shortSideFor(kbps, limits);
   const keep = `scale='min(iw,${side})':'min(ih,${side})':force_original_aspect_ratio=decrease:force_divisible_by=2` +
     (short ? `,scale='if(gt(iw,ih),-2,min(iw,${short}))':'if(gt(iw,ih),min(ih,${short}),-2)'` : '');
   const slow = (speed < 1 ? `setpts=PTS/${speed},` : '') + (fps && fps * speed > 31 ? 'fps=30,' : '');

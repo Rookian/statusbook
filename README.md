@@ -63,7 +63,7 @@ Inside a journey you put together **releases**, the batches you post to your Sta
 **Releasing and publishing**
 - Self-contained release folders with the files, a `release.json` and readable captions
 - WhatsApp's limits are checked and applied automatically
-- Videos are made to look good within WhatsApp's 9.9 MB: at most 30 frames per second, a smaller picture when bits are scarce, and scenes that need more are split into shorter posts (never shorter than 5 s)
+- Videos are made to look good within WhatsApp's 9.9 MB: at most 720p and 30 frames per second, and scenes that need more are split into shorter posts (never shorter than 5 s)
 - Built-in publishing through WhatsApp Web (Chrome, signed in once with the QR code)
 - Changes after a release was made are detected and updated before publishing
 - Single files or whole releases can be marked as sent or not sent by hand
@@ -112,7 +112,7 @@ choose the folder with your trip's photos and videos, and start your first relea
 |---|---|
 | Status video length | 90 s (longer scenes are split into pieces) |
 | Status video size via WhatsApp Web | 9.9 MB (WhatsApp Web refuses larger ones) |
-| Video format | MP4, H.264/AAC, at most 1080p |
+| Video format | MP4, H.264/AAC, at most 720p and 30 fps (WhatsApp has no HD for Status) |
 | Photo size | at most 2560 px on the longer side |
 | Captions | one line (WhatsApp Web sends on Enter) |
 
