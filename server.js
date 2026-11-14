@@ -1149,6 +1149,19 @@ async function hasAudio(file) {
   } catch { return false; }
 }
 
+// Frames per second of a video, or null if unknown.
+async function videoFps(file) {
+  const ffprobe = tool('ffprobe');
+  if (!ffprobe) return null;
+  try {
+    const out = await run(ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=avg_frame_rate', '-of', 'csv=p=0', file]);
+    const [a, b] = out.trim().split(/[\/,\s]/).map(Number);
+    return a && b ? a / b : a || null;
+  } catch {
+    return null;
+  }
+}
+
 async function probeFile(file) {
   const ffprobe = tool('ffprobe');
   const st = await fsp.stat(file);
@@ -1264,14 +1277,67 @@ const TURN_FILTER = { 90: 'transpose=1,', 180: 'hflip,vflip,', 270: 'transpose=2
 // atempo works between 0.5 and 2, so 1/4 speed is two steps of 1/2.
 const ATEMPO = { 0.75: 'atempo=0.75', 0.5: 'atempo=0.5', 0.25: 'atempo=0.5,atempo=0.5' };
 
-function statusVideoArgs(src, start, end, out, limits, kbps, rotate = 0, speed = 1, audio = true, lut = null, crop = null) {
+// Few bits per second look better on fewer pixels: under 6 Mbit/s the shorter side is
+// at most 1080 px, under 2.5 Mbit/s at most 720 px.
+const shortSideFor = kbps => (kbps < 2500 ? 720 : kbps < 6000 ? 1080 : 0);
+
+// The picture part of a status video: turned, cropped, slowed down, at most 30 frames
+// per second (60 fps costs twice the bits for little gain on a phone), scaled down.
+// fps: frame rate of the original, if known.
+function statusVideoFilter(limits, kbps, rotate, speed, crop, fps) {
   const side = limits.maxVideoSide;
-  const keep = `scale='min(iw,${side})':'min(ih,${side})':force_original_aspect_ratio=decrease:force_divisible_by=2`;
-  const slow = speed < 1 ? `setpts=PTS/${speed},` : '';
+  const short = shortSideFor(kbps);
+  const keep = `scale='min(iw,${side})':'min(ih,${side})':force_original_aspect_ratio=decrease:force_divisible_by=2` +
+    (short ? `,scale='if(gt(iw,ih),-2,min(iw,${short}))':'if(gt(iw,ih),min(ih,${short}),-2)'` : '');
+  const slow = (speed < 1 ? `setpts=PTS/${speed},` : '') + (fps && fps * speed > 31 ? 'fps=30,' : '');
+  const cut = crop ? `crop=trunc(iw*${crop.w}/2)*2:trunc(ih*${crop.h}/2)*2:trunc(iw*${crop.x}):trunc(ih*${crop.y}),` : '';
+  return `${TURN_FILTER[rotate] || ''}${cut}${slow}${keep}`;
+}
+
+// How many kbit/s a scene needs to look good: two short samples are encoded at
+// constant quality, without a size limit, and measured. Calm pictures need little,
+// water and reef a lot.
+const videoNeeds = new Map();
+async function videoNeedK(src, start, end, limits, rotate, speed, crop, fps) {
+  const ffmpeg = tool('ffmpeg');
+  if (!ffmpeg) return null;
+  const key = JSON.stringify([src, start, end, rotate, speed, crop]);
+  if (videoNeeds.has(key)) return videoNeeds.get(key);
+  const len = end - start, sample = Math.min(2 * speed, len);
+  const vf = `${statusVideoFilter(limits, 7000, rotate, speed, crop, fps)},format=yuv420p`;
+  await fsp.mkdir(PREVIEW_DIR, { recursive: true });
+  let need = 0;
+  for (const at of len > sample * 2.5 ? [0.25, 0.65] : [0]) {
+    const tmp = path.join(PREVIEW_DIR, `need-${crypto.randomBytes(6).toString('hex')}.mp4`);
+    try {
+      await run(ffmpeg, ['-y', '-v', 'error', '-ss', String(start + (len - sample) * at), '-t', String(sample), '-i', src,
+        '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', tmp]);
+      need = Math.max(need, Math.round((await fsp.stat(tmp)).size * 8 / 1000 / (sample / speed)));
+    } finally {
+      await fsp.unlink(tmp).catch(() => {});
+    }
+  }
+  videoNeeds.set(key, need);
+  return need;
+}
+
+// Into how many posts a scene goes. At least what the 90 s limit asks for; more when
+// the size limit leaves it too few bits to look good (up to about 7 Mbit/s is aimed
+// for), as long as every piece stays at least 5 s long.
+const MIN_PIECE_SECONDS = 5;
+function videoPieces(seconds, needK, limits) {
+  let k = Math.ceil(seconds / limits.maxVideoSeconds);
+  if (!needK) return k;
+  const target = Math.min(needK * 0.9, 7000);
+  while (videoBitrateK(seconds / k, limits) < target && seconds / (k + 1) >= MIN_PIECE_SECONDS) k++;
+  return k;
+}
+
+function statusVideoArgs(src, start, end, out, limits, kbps, rotate = 0, speed = 1, audio = true, lut = null, crop = null, fps = null) {
+  const picture = statusVideoFilter(limits, kbps, rotate, speed, crop, fps);
   // lut: the colour grade as a .cube file name (see gradeLutFile), applied to the scaled picture.
   // crop: fractions of the turned picture; even sizes, as H.264 needs them.
-  const cut = crop ? `crop=trunc(iw*${crop.w}/2)*2:trunc(ih*${crop.h}/2)*2:trunc(iw*${crop.x}):trunc(ih*${crop.y}),` : '';
-  let graph = `[0:v]${TURN_FILTER[rotate] || ''}${cut}${slow}${keep}${lut ? `,lut3d=file=${lut}` : ''},setsar=1,format=yuv420p[v]`;
+  let graph = `[0:v]${picture}${lut ? `,lut3d=file=${lut}` : ''},setsar=1,format=yuv420p[v]`;
   let audioMap = ['-map', '0:a:0?'];
   // Slowed down: the sound is stretched too (same pitch), so it stays in sync.
   if (speed < 1 && audio) {
@@ -1281,7 +1347,7 @@ function statusVideoArgs(src, start, end, out, limits, kbps, rotate = 0, speed =
   return ['-y', '-v', 'error', '-ss', String(start), '-t', String(end - start), '-i', src,
     '-filter_complex', graph,
     '-map', '[v]', ...audioMap, '-map_metadata', '0',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`,
+    '-c:v', 'libx264', '-preset', 'medium', '-crf', '21', '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`,
     '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', out];
 }
 
@@ -1877,6 +1943,7 @@ const routes = {
     const grade = (await readGrades(currentFolder))[path.basename(src)] || null;
     const lut = grade ? await gradeLutFile(grade) : null;
     const crop = (await readCrops(currentFolder))[path.basename(src)] || null;
+    const fps = await videoFps(src);
     (async () => {
       try {
         // Already rendered earlier and within the limits: copy instead of rendering again
@@ -1891,7 +1958,7 @@ const routes = {
         // with a lower bitrate.
         let kbps = videoBitrateK(seconds, limits);
         for (let attempt = 1; ; attempt++) {
-          await run(ffmpeg, statusVideoArgs(src, start, end, out, limits, kbps, rotate, speed, audio, lut, crop), lut ? { cwd: PREVIEW_DIR } : {});
+          await run(ffmpeg, statusVideoArgs(src, start, end, out, limits, kbps, rotate, speed, audio, lut, crop, fps), lut ? { cwd: PREVIEW_DIR } : {});
           const size = (await fsp.stat(out)).size;
           if (size <= limits.maxVideoMB * MB_BYTES) break;
           if (attempt >= 3) throw new Error(`still ${(size / MB_BYTES).toFixed(1)} MB after 3 tries (limit ${limits.maxVideoMB} MB)`);
@@ -1905,6 +1972,28 @@ const routes = {
       }
     })();
     return { job: id };
+  },
+  // Into how many posts each scene should go so it looks good within the size limit.
+  // scenes: [{ id, source, start, end, speed }] -> { pieces: { id: n } }
+  'POST /api/posts/video-pieces': async body => {
+    const limits = releaseLimits();
+    const rotations = await readRotations(currentFolder), crops = await readCrops(currentFolder);
+    const pieces = {};
+    for (const sc of Array.isArray(body.scenes) ? body.scenes.slice(0, 200) : []) {
+      const start = Number(sc.start), end = Number(sc.end), speed = cleanSpeed(sc.speed);
+      if (!(Number.isFinite(start) && Number.isFinite(end) && end > start) || mediaType(sc.source) !== 'video') continue;
+      const seconds = (end - start) / speed;
+      let need = null;
+      // Only worth measuring when a split is possible at all.
+      if (seconds >= MIN_PIECE_SECONDS * 2) {
+        try {
+          const src = fileInFolder(sc.source), name = path.basename(src);
+          need = await videoNeedK(src, start, end, limits, rotations[name] || 0, speed, crops[name] || null, await videoFps(src));
+        } catch { /* not measurable: split by length only */ }
+      }
+      pieces[String(sc.id)] = videoPieces(seconds, need, limits);
+    }
+    return { pieces };
   },
   'GET /api/posts/video-job': async (body, url) => {
     const job = videoJobs.get(url.searchParams.get('id') || '');
