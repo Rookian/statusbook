@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Turn the photos and videos of a trip into WhatsApp Status posts: picked, cut, captioned,<br>
-  put in order, and published part by part, from your PC.</b>
+  put in order, and published to WhatsApp, from your PC.</b>
 </p>
 
 ---
@@ -42,8 +42,7 @@ Inside a journey you put together **releases**, the batches you post to your Sta
 | **1. New release** | Start the next release of the journey. There is always one draft at a time. |
 | **2. Pick** | Browse every photo and video by day. **F** picks a photo or a whole video, **I** / **O** mark a scene in a video. Files that went out in an earlier release are locked, so nothing is posted twice. |
 | **3. Arrange** | Each pick is a post. Write captions, add text posts, put the posts in order, and add a **day intro** (date, map with a pin for every spot, Google Maps link). |
-| **4. Create release** | Statusbook makes the files: photos scaled if needed, scenes cut to MP4 under 9.9 MB, long scenes split into 90-second pieces, and the whole thing split into parts of 30. Every part starts with a day intro. |
-| **5. Publish** | One click per part posts it to your WhatsApp Status through WhatsApp Web, in order and with captions. Each post is ticked as sent. Parts can go out on different days. |
+| **4. Review & publish** | A short review in one window: the posts in order, posts without a caption, long videos that get split, and a spelling check. Then one click on **Publish**: Statusbook makes the files (photos scaled if needed, scenes cut to MP4 under 9.9 MB, long scenes split into 90-second pieces) and posts them to your WhatsApp Status through WhatsApp Web, one after the other, in order and with captions. Each post is ticked as sent; you can stop at any time and publish the rest later. |
 
 ## Features
 
@@ -57,16 +56,17 @@ Inside a journey you put together **releases**, the batches you post to your Sta
 - Posts in phone format (9:16), exactly as they will look on the Status
 - Captions with emoji, text-only posts in any color, and free reordering by drag and drop
 - Day intros with a map of the day's spots (Google Maps Static API) and a Google Maps link in the caption
-- When a day continues in the next part, a "Fortsetzung" intro is added automatically
+- When a release begins in the middle of a day, a "Fortsetzung" intro is added automatically
 - Locations from photo EXIF and video metadata; drone videos borrow the location of the nearest photo
 - Place names from OpenStreetMap, or from Google with your own API key
 
 **Releasing and publishing**
-- Self-contained release folders with the files, a `release.json` per part and readable captions
+- Self-contained release folders with the files, a `release.json` and readable captions
 - WhatsApp's limits are checked and applied automatically
 - Built-in publishing through WhatsApp Web (Chrome, signed in once with the QR code)
 - Changes after a release was made are detected and updated before publishing
-- Single files or whole parts can be marked as sent or not sent by hand
+- Single files or whole releases can be marked as sent or not sent by hand
+- Releases made in several parts by older versions stay readable and can still be published part by part
 
 **Comfort**
 - Several journeys, each with its own folder; the tool opens in the last one
@@ -113,7 +113,6 @@ choose the folder with your trip's photos and videos, and start your first relea
 | Status video size via WhatsApp Web | 9.9 MB (WhatsApp Web refuses larger ones) |
 | Video format | MP4, H.264/AAC, at most 1080p |
 | Photo size | at most 2560 px on the longer side |
-| Files per part | 30 |
 | Captions | one line (WhatsApp Web sends on Enter) |
 
 The values can be changed with `"releaseLimits"` in `settings.json`.
