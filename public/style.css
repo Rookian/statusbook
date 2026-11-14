@@ -414,6 +414,7 @@ dialog progress { width: 100%; height: 10px; accent-color: var(--ink); }
 #origDlg { width: min(620px, 94vw); }
 .origdest { display: flex; gap: 8px; margin: 8px 0; }
 .origdest input { flex: 1; min-width: 0; }
+#origAgainRow { display: flex; gap: 6px; align-items: center; margin: 0 0 10px; font-size: 13px; }
 #origErrors li { color: var(--warn); }
 #postsPhase { font-weight: 600; margin: 0 0 6px; }
 #postsErrors li { color: var(--danger); word-break: break-word; }

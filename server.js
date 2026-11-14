@@ -21,6 +21,7 @@ const PREVIEW_DIR = path.join(os.tmpdir(), 'media-picker-previews');
 const EXPORT_DIR_NAME = 'WhatsApp';
 const FAVORITES_FILE = '_favorites.json';
 const LOVED_FILE = '_loved.json'; // ♥ favorites (photos and videos), separate from picks
+const EXPORTED_FILE = '_exported.json'; // { scenes: { "file.mp4": { at, dest } } }: sent scenes already exported in original quality
 const CROPS_FILE = '_crops.json'; // { crops: { "name.jpg": { x, y, w, h } } }: fractions of the picture as shown (after turning)
 const GRADES_FILE = '_grades.json'; // { grades: { "name.jpg": { uw, gains, brightness, ... } } }, see public/grade.js
 const THUMBS_FILE = '_thumbs.json'; // { thumbs: { "clip.mp4": 12.3 } }: the frame shown as a video's thumbnail
@@ -1384,13 +1385,25 @@ async function sentScenes() {
 // Where the sent scenes of a journey folder were exported last (app settings).
 const exportDest = folder => (loadSettings().exportDest || {})[String(folder).toLowerCase()] || null;
 
+// Which sent scenes were exported already (kept in the journey folder), so a scene
+// is exported once, even if its file was moved away or another folder is chosen.
+async function readExported(folder) {
+  try {
+    const j = JSON.parse(await fsp.readFile(path.join(folder, EXPORTED_FILE), 'utf8'));
+    return j.scenes && typeof j.scenes === 'object' ? j.scenes : {};
+  } catch {
+    return {};
+  }
+}
+
 let originalsJob = null;
 
 // Cuts every sent scene from its original into dest, without re-encoding (stream
 // copy): picture and sound stay exactly as recorded. Such a cut can only begin on a
 // key frame, so a file may start a moment before its scene. Files that are already
 // there are skipped, so a later run only adds what was sent since.
-function startOriginalsExport(dest, scenes) {
+// again: also scenes that were exported before.
+function startOriginalsExport(dest, scenes, again = false) {
   const ffmpeg = tool('ffmpeg');
   const folder = currentFolder;
   const job = originalsJob = {
@@ -1400,14 +1413,23 @@ function startOriginalsExport(dest, scenes) {
   (async () => {
     try {
       await fsp.mkdir(dest, { recursive: true });
+      const exported = await readExported(folder);
+      const remember = async file => {
+        exported[file] = { at: stampFromDate(new Date()), dest };
+        await writeJsonAtomic(path.join(folder, EXPORTED_FILE), { scenes: exported });
+      };
       for (const s of scenes) {
         if (job.stopRequested) { job.stopped = true; break; }
         job.current = s.file;
         const out = path.join(dest, s.file), tmp = out + '.part';
         try {
           const have = await fsp.stat(out).catch(() => null);
-          if (have && have.size > 0) {
+          if (exported[s.file] && !again) {
             job.skipped++;
+          } else if (have && have.size > 0) {
+            // In the folder already (e.g. from before exports were recorded).
+            job.skipped++;
+            if (!exported[s.file]) await remember(s.file);
           } else {
             const src = path.join(folder, path.basename(s.source));
             await run(ffmpeg, ['-y', '-v', 'error', '-ss', String(s.start), '-t', String(s.end - s.start), '-i', src,
@@ -1416,6 +1438,7 @@ function startOriginalsExport(dest, scenes) {
             const st = await fsp.stat(src);
             await fsp.utimes(tmp, st.atime, st.mtime);
             await fsp.rename(tmp, out);
+            await remember(s.file);
             job.made++;
             job.bytes += (await fsp.stat(out)).size;
           }
@@ -1778,7 +1801,10 @@ const routes = {
   // Sent scenes in original quality, exported to a folder of the user's choice.
   'GET /api/originals': async () => ({
     dest: currentFolder ? exportDest(currentFolder) : null,
-    scenes: currentFolder ? (await sentScenes()).length : 0,
+    ...(currentFolder ? await (async () => {
+      const scenes = await sentScenes(), exported = await readExported(currentFolder);
+      return { scenes: scenes.length, exported: scenes.filter(s => exported[s.file]).length };
+    })() : { scenes: 0, exported: 0 }),
     job: originalsJob,
   }),
   'POST /api/originals/pick': async body => ({
@@ -1791,7 +1817,7 @@ const routes = {
     const dest = String(body.dest || '').trim();
     if (!dest || !path.isAbsolute(dest)) throw Object.assign(new Error('Choose a folder first'), { code: 400 });
     saveSettings({ exportDest: { ...(loadSettings().exportDest || {}), [currentFolder.toLowerCase()]: dest } });
-    return { job: startOriginalsExport(dest, await sentScenes()) };
+    return { job: startOriginalsExport(dest, await sentScenes(), !!body.again) };
   },
   'POST /api/originals/stop': async () => {
     if (originalsJob && originalsJob.running) originalsJob.stopRequested = true;

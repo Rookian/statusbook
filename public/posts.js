@@ -2384,7 +2384,7 @@ function renderOriginalsJob(job) {
     ? `${job.done} of ${job.total}` + (job.current ? ` · now: ${job.current}` : '') + (job.stopRequested ? ' · stopping …' : '')
     : (job.stopped ? `■ Stopped after ${job.done} of ${job.total}. ` : '✓ Done. ') +
       `${job.made} scene${job.made === 1 ? '' : 's'} exported (${gb})` +
-      (job.skipped ? `, ${job.skipped} ${job.skipped === 1 ? 'was' : 'were'} there already` : '') +
+      (job.skipped ? `, ${job.skipped} ${job.skipped === 1 ? 'was' : 'were'} exported before` : '') +
       (job.errors.length ? `, ${job.errors.length} failed` : '') + `. Folder: ${job.dest}`;
   $('#origErrors').replaceChildren(...job.errors.map(x => el('li', {}, x)));
   $('#origStop').hidden = !job.running;
@@ -2409,8 +2409,16 @@ async function openOriginalsExport() {
   if (st.job && st.job.running) { renderOriginalsJob(st.job); watchOriginals(); return; }
   $('#origSetup').hidden = false;
   $('#origProgress').hidden = true;
-  $('#origInfo').textContent = `${st.scenes} video scene${st.scenes === 1 ? ' was' : 's were'} sent so far. ` +
+  const fresh = st.scenes - st.exported;
+  $('#origInfo').textContent = `${st.scenes} video scene${st.scenes === 1 ? ' was' : 's were'} sent so far` +
+    (st.exported ? `, ${st.exported} of them ${st.exported === 1 ? 'is' : 'are'} exported already: ${fresh ? `${fresh} new` : 'nothing new'} to export. ` : '. ') +
     'Each is cut from its original video into the folder below.';
+  $('#origAgainRow').hidden = !st.exported;
+  $('#origAgain').checked = false;
+  $('#origGo').disabled = false;
+  const sync = () => { $('#origGo').disabled = !fresh && !$('#origAgain').checked; };
+  $('#origAgain').onchange = sync;
+  sync();
   if (st.dest && !$('#origDest').value) $('#origDest').value = st.dest;
 }
 
@@ -2418,7 +2426,7 @@ async function runOriginalsExport() {
   const dest = $('#origDest').value.trim();
   if (!dest) { toast('Choose a folder first'); return; }
   try {
-    const { job } = await api('/api/originals/export', { dest });
+    const { job } = await api('/api/originals/export', { dest, again: $('#origAgain').checked });
     renderOriginalsJob(job);
     watchOriginals();
   } catch (err) {
