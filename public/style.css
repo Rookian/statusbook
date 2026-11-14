@@ -716,6 +716,11 @@ body.focus #gradeSliders output, body.focus #gradeNote { color: rgba(255, 255, 2
 .fgrade { left: 3px; top: 3px; width: 17px; height: 17px; font-size: 10.5px; }
 
 /* ---------- "new version" note (when a reload would interrupt typing) ---------- */
+#updateNote { position: fixed; right: 18px; bottom: 54px; z-index: 300; background: var(--ink); color: #fff; border: none; border-radius: 999px; padding: 9px 16px; font-weight: 700; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); }
+#updateNote:hover { background: var(--lagoon); color: #fff; }
+
+/* ---------- scene lengths on the timeline ---------- */
+#timeline { height: 30px; }
 #tlScenes .seg, #tlPending { display: flex; align-items: center; justify-content: center; overflow: hidden; color: #fff; font-size: 11.5px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; }
 #tlScenes .seg span, #tlPending span { padding: 0 4px; text-shadow: 0 1px 2px rgba(0, 0, 0, .45); }
 #tlPending { opacity: .85; }

@@ -98,9 +98,9 @@ function tool(name) {
   return null;
 }
 
-function run(cmd, args) {
+function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+    execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024, windowsHide: true, ...opts }, (err, stdout, stderr) => {
       if (err) { err.stderr = stderr; reject(err); } else resolve(stdout);
     });
   });
@@ -1466,7 +1466,8 @@ const routes = {
     mapPageUrl: loadSettings().mapPageUrl || null,
   }),
   // Asked every few seconds by the page: goes up when files in the folder change.
-  'GET /api/folder-version': async () => ({ folder: currentFolder, version: folderVersion }),
+  // app: the page's own files changed (the page reloads); boot: the server was restarted.
+  'GET /api/folder-version': async () => ({ folder: currentFolder, version: folderVersion, app: pageVersion, boot: BOOT_ID }),
   'GET /api/items': async () => {
     if (!currentFolder) return { folder: null, items: [], view: { collapsed: [], lastFile: null } };
     return { folder: currentFolder, items: await scanFolder(currentFolder), view: folderView(currentFolder) };
@@ -1912,6 +1913,63 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// ---------- updating itself ----------
+// The app follows changes to its own files, like Node's watch mode (node --watch), but
+// it waits for a quiet moment:
+// - files of the page (public\) changed: the open page notices (see /api/folder-version)
+//   and reloads itself;
+// - server.js, publisher.js or public\grade.js changed: this server stops with exit
+//   code 75 and is started again by the small supervisor below. Not while a release is
+//   being made or published, and not if the changed file has a syntax error.
+const RESTART_CODE = 75;
+const BOOT_ID = crypto.randomBytes(4).toString('hex');
+let pageVersion = 0;
+let restartWanted = false, restarting = false;
+
+function watchApp() {
+  let pageTimer, serverTimer;
+  const wantRestart = () => { clearTimeout(serverTimer); serverTimer = setTimeout(() => { restartWanted = true; }, 800); };
+  try {
+    fs.watch(PUBLIC_DIR, (event, name) => {
+      if (String(name || '') === 'grade.js') wantRestart(); // the server uses it too
+      clearTimeout(pageTimer);
+      pageTimer = setTimeout(() => { pageVersion++; }, 500);
+    });
+    fs.watch(APP_DIR, (event, name) => { if (['server.js', 'publisher.js'].includes(String(name || ''))) wantRestart(); });
+  } catch { /* not watchable: restart by hand as before */ }
+  if (process.argv.includes('--child')) setInterval(tryRestart, 2000);
+}
+
+async function tryRestart() {
+  if (!restartWanted || restarting) return;
+  if (publishJob && publishJob.running) return;
+  for (const j of videoJobs.values()) if (!j.done) return;
+  if (identifyJobs.size || previewJobs.size) return;
+  restarting = true;
+  try {
+    for (const f of ['server.js', 'publisher.js', path.join('public', 'grade.js')]) await run(process.execPath, ['--check', path.join(APP_DIR, f)]);
+  } catch {
+    console.log('A changed file has an error: staying on the running version until it changes again.');
+    restartWanted = false;
+    restarting = false;
+    return;
+  }
+  console.log('New version: restarting …');
+  await publisher.close().catch(() => {});
+  process.exit(RESTART_CODE);
+}
+
+// Started normally, this process only looks after the real server (a copy of itself
+// with --child): when that one stops with RESTART_CODE it is started again.
+function supervise() {
+  const args = process.argv.slice(2);
+  const start = again => {
+    const child = spawn(process.execPath, [__filename, '--child', ...(again ? ['--no-browser'] : []), ...args], { stdio: 'inherit' });
+    child.on('exit', code => { if (code === RESTART_CODE) start(true); else process.exit(code == null ? 1 : code); });
+  };
+  start(false);
+}
+
 function listen(port) {
   server.removeAllListeners('listening'); // drop the handler from a port that was taken
   server.once('error', err => {
@@ -1930,6 +1988,8 @@ function listen(port) {
 }
 
 (async () => {
+  if (!process.argv.includes('--child') && !process.argv.includes('--no-restart')) { supervise(); return; }
+  watchApp();
   // A folder given on the command line opens directly (and its journey, if it has one);
   // otherwise the last journey. If its folder is missing, the page shows the journeys.
   const arg = process.argv.slice(2).find(a => !a.startsWith('--'));

@@ -1453,10 +1453,33 @@ async function loadItems() {
 // selection, collapsed days and scroll position stay, a playing video goes on.
 let folderSeen = null;
 
+// The same question also tells whether the app itself changed (its page files, or the
+// server was restarted with a new version): then the page reloads, at a moment that
+// doesn't interrupt typing or a running export.
+let appSeen = null, updateWaiting = false;
+
+function appChanged() {
+  updateWaiting = true;
+  const typing = document.activeElement && ['TEXTAREA', 'INPUT', 'SELECT'].includes(document.activeElement.tagName) && document.activeElement.type !== 'range';
+  const busy = typing || document.querySelector('dialog[open]');
+  $('#updateNote').hidden = !busy;
+  if (!busy) reloadForUpdate();
+}
+
+async function reloadForUpdate() {
+  $('#updateNote').hidden = true;
+  toast('New version: reloading …');
+  try { await flushPosts(); await flushView(); } catch { /* reload anyway */ }
+  location.reload();
+}
+
 async function checkFolder() {
-  if (!state.folder || document.hidden) return;
   try {
     const r = await api('/api/folder-version');
+    const app = `${r.boot}:${r.app}`;
+    if (appSeen !== null && app !== appSeen || updateWaiting) { appSeen = app; appChanged(); return; }
+    appSeen = app;
+    if (!state.folder || document.hidden) return;
     if (r.folder !== state.folder) return;
     if (folderSeen !== null && r.version !== folderSeen) await refreshItems();
     folderSeen = r.version;
