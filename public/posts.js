@@ -35,7 +35,7 @@ const posts = {
   selKey: null,
   showRemoved: false,
   releases: [],      // from the release folders (WhatsApp\Releases), see server.js
-  limits: { maxPosts: 30, maxVideoSeconds: 90, maxVideoMB: 9.9, maxVideoSide: 1920, maxImageSide: 2560 },
+  limits: { maxVideoSeconds: 90, maxVideoMB: 9.9, maxVideoSide: 1920, maxImageSide: 2560 },
   media: null,      // loaded <img> or <video> for the selected post
   mediaKey: null,
   raf: 0,
@@ -663,7 +663,7 @@ function draftCard() {
     el('span', { class: 'grow' }),
     el('button', { onclick: () => setMode('pick'), title: 'Step 1: pick photos and video scenes' }, ic('pick'), '1 · Pick'),
     el('button', { onclick: () => setMode('arrange'), title: 'Step 2: captions, text posts, day intros, order' }, ic('arrange'), '2 · Compose'),
-    el('button', { class: 'primary', disabled: list.length ? null : '', onclick: openPostsExport, title: 'Make the files of this release, within WhatsApp\'s limits' }, ic('package'), 'Create release'),
+    el('button', { class: 'primary', disabled: list.length ? null : '', onclick: openPostsExport, title: 'A last look, then everything goes to your WhatsApp Status' }, ic('send'), 'Review & publish'),
     el('button', { class: 'quiet', onclick: deleteDraft, title: 'Unpick everything in this draft' }, ic('trash'), 'Delete draft'));
 }
 
@@ -734,8 +734,8 @@ function newSection() {
     el('span', { class: 'grow' }),
     el('button', {
       class: 'primary', disabled: n ? null : '', onclick: openPostsExport,
-      title: 'Make the files of this release, within WhatsApp\'s limits',
-    }, ic('package'), 'Create release'),
+      title: 'A last look, then everything goes to your WhatsApp Status',
+    }, ic('send'), 'Review & publish'),
   ], grid => {
     if (!list.length) {
       grid.append(el('div', { class: 'gempty' }, 'Nothing picked yet. Pick photos (P) and scenes (I / O) for this release in Pick.'));
@@ -1104,7 +1104,7 @@ function renderReleaseInfo(e) {
   box.replaceChildren();
   const st = postStatus(e.key);
   if (st.state === 'new') {
-    box.append(el('div', { class: 'muted' }, `In the draft of ${draftTitle()}. "Create release" makes its files.`));
+    box.append(el('div', { class: 'muted' }, `In the draft of ${draftTitle()}. "Review & publish" sends it.`));
     return;
   }
   if (st.state === 'sent') box.append(el('div', {}, `✓ Sent on ${parseStamp(st.sentAt).toLocaleString()}. It can't be changed any more.`));
@@ -1908,8 +1908,10 @@ function partStartDay(items, i) {
 // More files than WhatsApp takes at once: split into parts that belong together.
 // Every part starts with a day intro (an automatic one when the part begins in the
 // middle of a day) and no part ends with one.
+// Publishing posts one file at a time, so a release is no longer split: one part.
+// (Older releases made in several parts are still read and shown as they are.)
 function releaseParts(allItems) {
-  const max = posts.limits.maxPosts;
+  const max = Infinity;
   const drop = new Set(emptyIntros(allItems));
   const items = allItems.filter(it => !drop.has(it));
   const parts = [];
@@ -1933,9 +1935,21 @@ function releaseParts(allItems) {
 function openPostsExport() {
   if (!hasDraft() || !exportList().length) { toast('Pick photos and scenes for the release first'); return; }
   updatePostsExportInfo();
+  $('#postsTitle').textContent = `Review & publish · ${draftTitle()}`;
+  $('#postsPhase').textContent = '';
+  $('#postsStop').hidden = true;
+  $('#postsClose').disabled = false;
+  reviewPublishing = false;
   $('#postsSetup').hidden = false;
   $('#postsProgress').hidden = true;
   $('#postsDlg').showModal();
+}
+
+// "Show" next to a check: back to Compose with that post selected.
+function showPostFromReview(key) {
+  $('#postsDlg').close();
+  if (state.mode !== 'arrange') setMode('arrange');
+  selectEntry(key);
 }
 
 function updatePostsExportInfo() {
@@ -1946,22 +1960,35 @@ function updatePostsExportInfo() {
   const files = parts.flatMap(p => p.items);
   const name = nextReleaseName();
   $('#postsGo').disabled = !files.length;
-  $('#postsExportSummary').textContent = !files.length ? 'Nothing to release with this choice.'
-    : `${list.length} post${list.length === 1 ? ' becomes' : 's become'} ${draftTitle()}` +
-      (parts.length > 1
-        ? ` in ${parts.length} parts (${parts.map(p => p.items.length).join(' + ')} files), because WhatsApp takes at most ${L.maxPosts} at once.`
-        : ` (${files.length} file${files.length === 1 ? '' : 's'}).`) +
-      ` Folder: WhatsApp\\Releases\\${name}. Numbered in posting order (01_…, 02_…) across all parts.`;
+  const days = dayRangeOf(list);
+  $('#postsGo').textContent = `Publish ${files.length} post${files.length === 1 ? '' : 's'}`;
+  $('#postsExportSummary').textContent = !files.length ? 'Nothing to publish with this choice.'
+    : `${files.length} post${files.length === 1 ? ' goes' : 's go'} to your WhatsApp Status, in this order` + (days ? ` (${days})` : '') + '.';
+  // The posts in order, small; a click goes to that post in Compose.
+  const strip = $('#postsThumbs');
+  strip.replaceChildren(...files.map((it, i) => {
+    const e = it.e;
+    const style = e.kind === 'media' ? mediaStyle(itemOf(e.source)) : null;
+    return el('div', { class: 'rthumb' + (e.type === 'text' ? ' text' : ''), title: `${pad2(i + 1)} · ` + (e.type === 'text' ? (postView(e).text || 'Text post').split('\n')[0] : e.source),
+      onclick: () => { if (!e.cfg.auto) showPostFromReview(e.key); } },
+    e.type === 'text' ? el('span', {}, e.cfg.intro ? '🗺' : 'Aa')
+      : el('img', { src: thumbUrl(e), loading: 'lazy', alt: '', class: rotClass(rotOf(e.source)).trim() || null, style }),
+    e.type === 'video' ? el('i', {}, '▶') : null);
+  }));
   const warn = $('#postsWarnings');
   warn.replaceChildren();
-  const split = list.filter(e => postLen(e) > L.maxVideoSeconds).length;
+  const check = (text, keys) => warn.append(el('li', {}, text,
+    keys && keys.length ? el('button', { class: 'linkbtn', onclick: () => showPostFromReview(keys[0]) }, 'Show') : null));
+  const long = list.filter(e => postLen(e) > L.maxVideoSeconds);
+  const noCaption = list.filter(e => e.kind === 'media' && !fullCaption(e, postView(e)).trim());
+  if (long.length) check(`${long.length} video${long.length === 1 ? ' is' : 's are'} longer than ${L.maxVideoSeconds} s and will be split into pieces (WhatsApp Status shows at most ${L.maxVideoSeconds} s).`, long.map(e => e.key));
+  if (noCaption.length) check(`${noCaption.length} photo${noCaption.length === 1 ? '' : 's'} or video${noCaption.length === 1 ? ' has' : 's have'} no caption.`, noCaption.map(e => e.key));
   const captions = files.filter(it => it.caption).length;
-  if (split) warn.append(el('li', {}, `${split} video${split === 1 ? ' is' : 's are'} longer than ${L.maxVideoSeconds} s and will be split into pieces (WhatsApp Status shows at most ${L.maxVideoSeconds} s).`));
   // Day intros made for the start of a part, and intros left out.
   for (const p of parts) {
     const a = p.items[0] && p.items[0].e.cfg.auto;
     if (a) {
-      warn.append(el('li', {}, `${p.name[0].toUpperCase()}${p.name.slice(1)} begins on ${germanDay(itemDay(p.items[0]))}: ` +
+      warn.append(el('li', {}, `The release begins on ${germanDay(itemDay(p.items[0]))}: ` +
         (a === 'continuation' ? 'it starts with that day\'s intro again, marked "Fortsetzung".' : 'that day has no intro, so a plain one (date and map) is added.')));
     }
   }
@@ -1971,7 +1998,8 @@ function updatePostsExportInfo() {
   }
   warn.append(el('li', { style: 'color: var(--muted)' },
     `Within WhatsApp's limits: videos MP4, at most ${L.maxVideoSide >= 1920 ? '1080p' : `${L.maxVideoSide} px`}, ${L.maxVideoMB} MB and ${L.maxVideoSeconds} s; photos at most ${L.maxImageSide} px.`));
-  if (captions) warn.append(el('li', { style: 'color: var(--muted)' }, `${captions} caption${captions === 1 ? ' goes' : 's go'} into each part's release.json and captions.txt.`));
+  warn.append(el('li', { style: 'color: var(--muted)' }, `The spelling of captions and texts is checked when you click Publish.` +
+    (captions ? ` Files and captions are kept in WhatsApp\\Releases\\${name}.` : '')));
 }
 
 // "beach", "DJI_0042_95s", "DJI_0042_95s_1of2", "text": the file name after its number.
@@ -2110,9 +2138,33 @@ async function updateInRelease(r, p, items) {
   return !errors.length;
 }
 
-async function runPostsExport() {
+// Publish in the review window: spelling check, then the files, then WhatsApp.
+async function reviewPublish() {
   const list = exportList();
   if (!list.length) return;
+  // Spelling first, on the posts as they are now; nothing has been made yet.
+  const fake = { items: list.map((e, i) => ({ postKey: e.key, n: i + 1 })) };
+  if (!(await spellcheckBeforePublish(fake))) return;
+  $('#postsPhase').textContent = '1 of 2 · Making the files';
+  const made = await runPostsExport();
+  if (!made) return;
+  if (made.errors.length) {
+    $('#postsPhase').textContent = '⚠ Some files could not be made, so nothing was posted yet.';
+    $('#postsStatus').textContent = 'Fix or remove those posts, then publish the release from the Releases page.';
+    return;
+  }
+  const r = posts.releases.find(x => x.release === made.release);
+  const p = r && r.parts[0];
+  if (!p) return;
+  $('#postsPhase').textContent = '2 of 2 · Posting to WhatsApp';
+  $('#postsStatus').textContent = 'Opening WhatsApp Web …';
+  $('#postsClose').disabled = true;
+  await publishPart(r, p, { quiet: true });
+}
+
+async function runPostsExport() {
+  const list = exportList();
+  if (!list.length) return null;
   $('#postsSetup').hidden = true;
   $('#postsProgress').hidden = false;
   $('#postsErrors').replaceChildren();
@@ -2181,10 +2233,9 @@ async function runPostsExport() {
   delete posts.data.draft;
   savePosts();
   setMode('releases', true);  // redrawn even when Releases is open already
-  finish(`Done. ${ok} of ${items.length} files in ${title}` +
-    (parts.length > 1 ? `, ${parts.length} parts` : '') +
-    (reused ? ` (${reused} video${reused === 1 ? '' : 's'} reused from an earlier export)` : '') +
-    '. Publish it part by part with its Publish button.');
+  finish(`${ok} of ${items.length} files made for ${title}` +
+    (reused ? ` (${reused} video${reused === 1 ? '' : 's'} reused from an earlier export)` : '') + '.');
+  return { release, errors };
 }
 
 function sentChip(sent, total) {
@@ -2197,8 +2248,33 @@ function sentChip(sent, total) {
 
 let publishPoll = null;
 let publishSeen = -1;
+let reviewPublishing = false;   // started from the Review & publish window: progress shows there
+
+// The progress in the Review & publish window.
+function renderReviewProgress(job, note) {
+  const stop = $('#postsStop');
+  if (note) { $('#postsStatus').textContent = note; return; }
+  const bar = $('#postsBar');
+  bar.max = Math.max(1, job.total);
+  bar.value = job.done;
+  stop.hidden = !job.running;
+  stop.disabled = !!job.stopRequested;
+  $('#postsClose').disabled = !!job.running;
+  if (job.running) {
+    $('#postsStatus').textContent = `${job.done} of ${job.total} sent` + (job.current ? ` · now: ${job.current}` : '') +
+      (job.stopRequested ? ' · stopping after this post …' : '');
+    return;
+  }
+  reviewPublishing = false;
+  $('#postsPhase').textContent = job.error ? '⚠ Publishing stopped' : job.stopped ? '■ Stopped' : '✓ Published';
+  $('#postsStatus').textContent = job.error
+    ? `Stopped after ${job.done} of ${job.total}: ${job.error}. Posts that went out are ticked; publish the rest from the Releases page.`
+    : job.stopped ? `Stopped after ${job.done} of ${job.total}, as asked. The rest can be published from the Releases page.`
+      : `All ${job.done} posts are on your WhatsApp Status.`;
+}
 
 function renderPublishPanel(job, note) {
+  if (reviewPublishing && $('#postsDlg').open) { renderReviewProgress(job, note); return; }
   const panel = $('#publishPanel');
   panel.hidden = false;
   panel.classList.toggle('error', !!(job && job.error));
@@ -2231,7 +2307,7 @@ function watchPublish() {
   publishPoll = setInterval(async () => {
     const st = await api('/api/publish/status').catch(() => null);
     if (!st || !st.job) return;
-    if (inPostsView()) renderPublishPanel(st.job);
+    if (inPostsView() || reviewPublishing) renderPublishPanel(st.job);
     if (st.job.done !== publishSeen || !st.job.running) {
       publishSeen = st.job.done;
       await loadReleases();
@@ -2341,7 +2417,12 @@ function showSpellDialog(issues, resolve) {
   dlg.showModal();
 }
 
-async function publishPart(r, p) {
+// quiet: from the review window, where spelling and the yes are done already; its
+// progress shows in that window.
+async function publishPart(r, p, { quiet = false } = {}) {
+  reviewPublishing = quiet;
+  const panelNote = note => { if (quiet) $('#postsStatus').textContent = note; else renderPublishPanel(null, note); };
+  if (!quiet) {
   // WhatsApp shows statuses in the order they were posted: an earlier part sent later
   // would come after this one (a "Fortsetzung" without its beginning).
   const before = r.parts.slice(0, r.parts.indexOf(p)).filter(x => x.items.some(i => !i.sentAt));
@@ -2350,16 +2431,19 @@ async function publishPart(r, p) {
     `Publish ${before[0].part} first (Cancel), or publish ${p.part} anyway (OK)?`)) return;
   if (!(await spellcheckBeforePublish(p))) return;
   const unsent = p.items.filter(i => !i.sentAt).length;
-  const changed = p.items.filter(i => releaseChanges(i));
+  const changedNow = p.items.filter(i => releaseChanges(i));
   if (!confirm(`Publish ${p.part} of release ${releaseTitle(r.release)} to WhatsApp now?\n\n` +
     `${unsent} post${unsent === 1 ? '' : 's'} go to your WhatsApp Status, in order and with their captions. ` +
     'Each is ticked as sent as soon as WhatsApp has sent it.' +
-    (changed.length ? `\n\n${changed.length} post${changed.length === 1 ? ' was' : 's were'} changed after the release was made; ` +
-      `${changed.length === 1 ? 'it is' : 'they are'} updated in the release first.` : ''))) return;
+    (changedNow.length ? `\n\n${changedNow.length} post${changedNow.length === 1 ? ' was' : 's were'} changed after the release was made; ` +
+      `${changedNow.length === 1 ? 'it is' : 'they are'} updated in the release first.` : ''))) return;
+  }
+  const unsentQuiet = p.items.filter(i => !i.sentAt).length;
+  const changed = quiet ? [] : p.items.filter(i => releaseChanges(i));
   try {
     let st = await api('/api/publish/status');
-    if (st.browser === 'missing') { toast('Google Chrome was not found on this PC'); return; }
-    if (st.job && st.job.running) { toast('A part is being published already'); return; }
+    if (st.browser === 'missing') { panelNote('⚠ Google Chrome was not found on this PC'); return; }
+    if (st.job && st.job.running) { panelNote('⚠ Something is being published already'); return; }
     if (changed.length) {
       renderPublishPanel(null, `✎ Updating ${changed.length} changed post${changed.length === 1 ? '' : 's'} in the release …`);
       if (!(await updateInRelease(r, p, changed))) {
@@ -2373,20 +2457,20 @@ async function publishPart(r, p) {
       for (let i = 0; i < 300; i++) {
         st = await api('/api/publish/status');
         if (st.login === 'ready') break;
-        renderPublishPanel(null, st.login === 'signin'
+        panelNote(st.login === 'signin'
           ? '🔑 Sign in to WhatsApp in the Chrome window that opened: on your phone, WhatsApp → Linked devices → Link a device, then scan the QR code. Publishing starts by itself afterwards.'
           : st.login === 'closed' ? 'The WhatsApp window was closed. Click Publish again.' : '⏳ Opening WhatsApp Web …');
         if (st.login === 'closed') return;
         await sleep(1500);
       }
-      if (st.login !== 'ready') { renderPublishPanel(null, 'WhatsApp Web did not get ready. Click Publish again.'); return; }
+      if (st.login !== 'ready') { panelNote('WhatsApp Web did not get ready. Click Publish again.'); return; }
     }
     const { job } = await api('/api/publish/start', { release: r.release, part: p.part });
     publishSeen = -1;
     renderPublishPanel(job);
     watchPublish();
   } catch (err) {
-    renderPublishPanel({ release: r.release, part: p.part, done: 0, total: unsent, error: err.message });
+    renderPublishPanel({ release: r.release, part: p.part, done: 0, total: unsentQuiet, error: err.message });
   }
 }
 
@@ -2579,7 +2663,11 @@ function initPosts() {
     setMode('arrange');
   });
   $('#postsCancel').addEventListener('click', () => $('#postsDlg').close());
-  $('#postsGo').addEventListener('click', runPostsExport);
+  $('#postsGo').addEventListener('click', reviewPublish);
+  $('#postsStop').addEventListener('click', () => {
+    $('#postsStop').disabled = true;
+    api('/api/publish/stop', {}).catch(err => toast(err.message));
+  });
   $('#postsClose').addEventListener('click', () => $('#postsDlg').close());
   $('#postsReveal').addEventListener('click', () => api('/api/reveal', posts.lastRelease ? { release: posts.lastRelease } : { releases: true }).catch(() => {}));
   $('#postsDlg').addEventListener('cancel', ev => { if ($('#postsClose').disabled && !$('#postsProgress').hidden) ev.preventDefault(); });

@@ -397,6 +397,17 @@ dialog progress { width: 100%; height: 10px; accent-color: var(--ink); }
 #postFields.locked .field, #postFields.locked .editor-btns { opacity: .55; }
 .editor-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 #postsWarnings li { color: var(--warn); }
+#postsWarnings .linkbtn { background: none; border: none; padding: 0; margin-left: 6px; color: #0b7d78; cursor: pointer; font-size: inherit; text-decoration: underline; }
+#postsDlg { width: min(640px, 94vw); }
+#postsDlg .btns .grow { flex: 1; }
+/* Review & publish: the posts in order, small */
+#postsThumbs { display: flex; flex-wrap: wrap; gap: 4px; max-height: 190px; overflow-y: auto; margin: 6px 0 10px; }
+#postsThumbs .rthumb { position: relative; width: 44px; height: 78px; border-radius: 4px; overflow: hidden; background: #222; cursor: pointer; flex: none; }
+#postsThumbs .rthumb img { width: 100%; height: 100%; object-fit: cover; }
+#postsThumbs .rthumb.text { display: grid; place-items: center; background: #0b7d78; color: #fff; font-size: 15px; }
+#postsThumbs .rthumb i { position: absolute; right: 2px; bottom: 1px; color: #fff; font-style: normal; font-size: 10px; text-shadow: 0 0 3px #000; }
+#postsThumbs .rthumb:hover { outline: 2px solid #0b7d78; }
+#postsPhase { font-weight: 600; margin: 0 0 6px; }
 #postsErrors li { color: var(--danger); word-break: break-word; }
 #googleDlg { width: min(560px, 94vw); }
 #googleDlg a { color: #0b7d78; }

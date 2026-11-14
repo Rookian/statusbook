@@ -250,22 +250,28 @@
     </span>
   </footer>
 
+  <!-- Review & publish: a last look at the release, then one click makes the files
+       and posts them to WhatsApp, one after the other (posts.js). -->
   <dialog id="postsDlg">
-    <h2>Create release</h2>
+    <h2 id="postsTitle">Review &amp; publish</h2>
     <div id="postsSetup">
       <p id="postsExportSummary"></p>
+      <div id="postsThumbs"></div>
       <ul id="postsWarnings"></ul>
       <div class="btns">
-        <button id="postsCancel">Cancel</button>
-        <button id="postsGo" class="primary">Create release</button>
+        <small class="muted grow">Files are made first, then posted. You can stop any time.</small>
+        <button id="postsCancel">Back to Compose</button>
+        <button id="postsGo" class="primary">Publish</button>
       </div>
     </div>
     <div id="postsProgress" hidden>
+      <p id="postsPhase"></p>
       <progress id="postsBar" value="0" max="1"></progress>
       <p id="postsStatus"></p>
       <ul id="postsErrors"></ul>
       <div class="btns">
         <button id="postsReveal">Open release folder</button>
+        <button id="postsStop" hidden>■ Stop after this post</button>
         <button id="postsClose" class="primary">Close</button>
       </div>
     </div>

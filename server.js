@@ -1110,7 +1110,6 @@ const PART_RE = /^part (\d{1,3}) of (\d{1,3})$/;
 // WhatsApp Status limits (WhatsApp Help Center, where it is clear; otherwise the
 // safer value). Can be overridden with "releaseLimits" in settings.json.
 const DEFAULT_LIMITS = {
-  maxPosts: 30,          // per part: older WhatsApp versions take 30 at once
   maxVideoSeconds: 90,   // Status shows only the first 90 s
   maxVideoMB: 9.9,       // WhatsApp Web takes Status videos up to about 10 MB (tested); see MB_BYTES
   maxVideoSide: 1920,    // 1080p; Status has no HD
