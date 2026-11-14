@@ -1845,13 +1845,15 @@ function nextReleaseName() {
 
 // The files a release will contain, in posting order. Videos longer than WhatsApp
 // shows are split into equal pieces ("1/2", "2/2"); the caption goes with the first.
+// A scene whose picture needs more bits than WhatsApp's size limit leaves it is split
+// further, into pieces of at least 5 s (the server measures that, see checkVideoPieces).
 function releaseItems(list) {
   const L = posts.limits;
   const items = [];
   for (const e of list) {
     const v = postView(e);
-    if (e.type === 'video' && postLen(e) > L.maxVideoSeconds) {
-      const k = Math.ceil(postLen(e) / L.maxVideoSeconds);
+    const k = e.type === 'video' ? piecesOf(e) : 1;
+    if (k > 1) {
       const seg = (e.end - e.start) / k; // in the original video's time
       for (let i = 0; i < k; i++) {
         items.push({ e, v, start: e.start + i * seg, end: e.start + (i + 1) * seg, piece: `${i + 1}/${k}`, caption: i === 0 ? fullCaption(e, v) : '' });
@@ -1935,6 +1937,12 @@ function releaseParts(allItems) {
 function openPostsExport() {
   if (!hasDraft() || !exportList().length) { toast('Pick photos and scenes for the release first'); return; }
   updatePostsExportInfo();
+  // Which videos need more posts to stay sharp takes a moment to measure.
+  if (exportList().some(e => e.type === 'video')) {
+    $('#postsGo').disabled = true;
+    $('#postsGo').textContent = 'Checking the videos …';
+    checkVideoPieces(exportList()).then(() => { if ($('#postsDlg').open && !$('#postsSetup').hidden) updatePostsExportInfo(); });
+  }
   $('#postsTitle').textContent = `Review & publish · ${draftTitle()}`;
   $('#postsPhase').textContent = '';
   $('#postsStop').hidden = true;
@@ -1943,6 +1951,29 @@ function openPostsExport() {
   $('#postsSetup').hidden = false;
   $('#postsProgress').hidden = true;
   $('#postsDlg').showModal();
+}
+
+// Into how many posts each video of the release goes: asked from the server, which
+// measures how many bits the picture needs. Kept per scene and speed.
+const videoPieces = new Map();
+const pieceKey = e => `${e.key}|${e.speed || 1}`;
+const splitForQuality = () => localStorage.getItem('media-picker-split') !== 'off';
+const lengthPieces = e => Math.ceil(postLen(e) / posts.limits.maxVideoSeconds);
+function piecesOf(e) {
+  const k = lengthPieces(e);
+  return splitForQuality() ? Math.max(k, videoPieces.get(pieceKey(e)) || 1) : k;
+}
+
+async function checkVideoPieces(list) {
+  const scenes = list.filter(e => e.type === 'video')
+    .map(e => ({ id: pieceKey(e), source: e.source, start: e.start, end: e.end, speed: e.speed || 1 }));
+  if (!scenes.length) return;
+  try {
+    const { pieces } = await apiRetry('/api/posts/video-pieces', { scenes });
+    for (const [id, k] of Object.entries(pieces || {})) videoPieces.set(id, k);
+  } catch (err) {
+    toast('The videos could not be checked: ' + err.message);
+  }
 }
 
 // "Show" next to a check: back to Compose with that post selected.
@@ -1980,6 +2011,18 @@ function updatePostsExportInfo() {
   const check = (text, keys) => warn.append(el('li', {}, text,
     keys && keys.length ? el('button', { class: 'linkbtn', onclick: () => showPostFromReview(keys[0]) }, 'Show') : null));
   const long = list.filter(e => postLen(e) > L.maxVideoSeconds);
+  // Videos that need more posts than their length asks for, to look good.
+  const sharp = list.filter(e => e.type === 'video' && (videoPieces.get(pieceKey(e)) || 1) > lengthPieces(e));
+  $('#postsSplitRow').hidden = !sharp.length;
+  $('#postsSplit').checked = splitForQuality();
+  if (sharp.length) {
+    const extra = sharp.reduce((n, e) => n + (videoPieces.get(pieceKey(e)) || 1) - lengthPieces(e), 0);
+    check(splitForQuality()
+      ? `${sharp.length} video${sharp.length === 1 ? ' is' : 's are'} split into shorter posts (${extra} more post${extra === 1 ? '' : 's'}): ` +
+        `WhatsApp's ${L.maxVideoMB} MB per video is too little for ${sharp.length === 1 ? 'its' : 'their'} length and picture.`
+      : `${sharp.length} video${sharp.length === 1 ? '' : 's'} will look blocky: WhatsApp's ${L.maxVideoMB} MB per video is too little for ${sharp.length === 1 ? 'its' : 'their'} length and picture.`,
+    sharp.map(e => e.key));
+  }
   const noCaption = list.filter(e => e.kind === 'media' && !fullCaption(e, postView(e)).trim());
   if (long.length) check(`${long.length} video${long.length === 1 ? ' is' : 's are'} longer than ${L.maxVideoSeconds} s and will be split into pieces (WhatsApp Status shows at most ${L.maxVideoSeconds} s).`, long.map(e => e.key));
   if (noCaption.length) check(`${noCaption.length} photo${noCaption.length === 1 ? '' : 's'} or video${noCaption.length === 1 ? ' has' : 's have'} no caption.`, noCaption.map(e => e.key));
@@ -2664,6 +2707,10 @@ function initPosts() {
   });
   $('#postsCancel').addEventListener('click', () => $('#postsDlg').close());
   $('#postsGo').addEventListener('click', reviewPublish);
+  $('#postsSplit').addEventListener('change', ev => {
+    localStorage.setItem('media-picker-split', ev.target.checked ? 'on' : 'off');
+    updatePostsExportInfo();
+  });
   $('#postsStop').addEventListener('click', () => {
     $('#postsStop').disabled = true;
     api('/api/publish/stop', {}).catch(err => toast(err.message));

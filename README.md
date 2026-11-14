@@ -63,6 +63,7 @@ Inside a journey you put together **releases**, the batches you post to your Sta
 **Releasing and publishing**
 - Self-contained release folders with the files, a `release.json` and readable captions
 - WhatsApp's limits are checked and applied automatically
+- Videos are made to look good within WhatsApp's 9.9 MB: at most 30 frames per second, a smaller picture when bits are scarce, and scenes that need more are split into shorter posts (never shorter than 5 s)
 - Built-in publishing through WhatsApp Web (Chrome, signed in once with the QR code)
 - Changes after a release was made are detected and updated before publishing
 - Single files or whole releases can be marked as sent or not sent by hand
