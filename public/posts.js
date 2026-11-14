@@ -592,7 +592,8 @@ function dayLabel(time) {
   return parseStamp(time.slice(0, 10)).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-// Releases: the draft on top, then the release parts, newest first, each with its
+// Releases: the draft on top, then the releases, newest first (their parts in order:
+// part 1 above part 2, so they get published in the right order), each part with its
 // Publish button (fully sent parts start collapsed). Arrange: the draft's posts,
 // editable and movable.
 // reveal: scroll the selected post into view (not when only the status changed).
@@ -622,7 +623,7 @@ function renderGallery({ reveal = true } = {}) {
       g.append(el('div', { class: 'gnote warnline' }, `Release ${releaseTitle(r.release)}: only ${r.parts.length} of ${r.partsTotal} parts are complete (the export was interrupted).`));
     }
     const group = r.parts.length > 1 ? el('div', { class: 'rel-group' }) : g;
-    for (const p of [...r.parts].reverse()) group.append(partSection(r, p));
+    for (const p of r.parts) group.append(partSection(r, p));
     if (group !== g) g.append(group);
   }
   if (!posts.releases.length && !hasDraft()) g.append(el('div', { class: 'gempty' }, 'No releases yet.'));
@@ -1868,7 +1869,8 @@ function autoIntroItem(day) {
     cfg: {
       intro: { day }, auto: t ? 'continuation' : 'intro', bg: (t && t.bg) || INTRO_BG,
       text: t ? `${date}\nFortsetzung` : date,
-      caption: t ? ['Fortsetzung', caption].filter(Boolean).join(' – ') : caption,
+      // Short: the long story of the day stays with its first part.
+      caption: t ? `Fortsetzung vom ${date.split('\n')[0].trim()}` : caption,
       place: t ? t.place : undefined, noLocation: t ? t.noLocation : undefined,
     },
   };
@@ -2314,6 +2316,12 @@ function showSpellDialog(issues, resolve) {
 }
 
 async function publishPart(r, p) {
+  // WhatsApp shows statuses in the order they were posted: an earlier part sent later
+  // would come after this one (a "Fortsetzung" without its beginning).
+  const before = r.parts.slice(0, r.parts.indexOf(p)).filter(x => x.items.some(i => !i.sentAt));
+  if (before.length && !confirm(`${before.map(x => x.part).join(' and ')} of this release ${before.length === 1 ? "isn't" : "aren't"} sent yet.\n\n` +
+    `WhatsApp shows statuses in the order they are posted, so ${before.length === 1 ? 'it' : 'they'} would appear after ${p.part}. ` +
+    `Publish ${before[0].part} first (Cancel), or publish ${p.part} anyway (OK)?`)) return;
   if (!(await spellcheckBeforePublish(p))) return;
   const unsent = p.items.filter(i => !i.sentAt).length;
   const changed = p.items.filter(i => releaseChanges(i));
