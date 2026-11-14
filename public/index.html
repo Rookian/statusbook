@@ -104,15 +104,16 @@
       <div id="videoPanel" hidden>
         <div id="timeline" title="Click to jump">
           <div id="tlScenes"></div>
-          <div id="tlPending"></div>
+          <div id="tlPending"><span></span></div>
           <div id="tlHead"></div>
         </div>
         <div id="sceneBar">
           <button id="playBtn" title="Play / pause (Space)">▶</button>
           <button id="muteBtn" title="Sound on / off (M)">🔊</button>
-          <span id="speedSeg" class="seg" title="Speed (S slower · Shift+S faster). New scenes get this speed: slow motion in the release too.">
+          <span id="speedSeg" class="seg" title="Speed (S slower · Shift+S faster). In a scene (click it in the timeline): changes that scene, also in the release. Outside: the speed new scenes get.">
             <button data-speed="1" class="on">1×</button><button data-speed="0.75">¾×</button><button data-speed="0.5">½×</button><button data-speed="0.25">¼×</button>
           </span>
+          <span id="speedFor" title="What the speed buttons change right now">new scenes</span>
           <button id="wholeVideo" title="Pick the whole video, like a photo (P again to unpick)">P · Whole video</button>
           <button id="markIn">I · Scene start</button>
           <button id="markOut">O · Scene end</button>

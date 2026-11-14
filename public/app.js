@@ -484,7 +484,7 @@ function applyPlayback(v) {
   const sync = () => updatePlayButtons();
   for (const type of ['play', 'pause', 'ended', 'loadedmetadata']) v.addEventListener(type, sync);
   // Loading a file resets the rate: set it again once it's there.
-  v.addEventListener('loadedmetadata', () => { v.playbackRate = state.speed; });
+  v.addEventListener('loadedmetadata', () => { speedTargetKey = null; syncSpeedTarget(true); });
 }
 
 function togglePlay() {
@@ -493,17 +493,58 @@ function togglePlay() {
   if (v.paused) v.play().catch(() => {}); else v.pause();
 }
 
+// The speed buttons work on the scene the play head stands in (click a scene in the
+// timeline or in the list to go there): its speed changes, also in the release.
+// Outside of any scene they set the speed that new scenes will get.
+function activeScene() {
+  const it = current(), v = video();
+  if (!it || it.type !== 'video' || !v) return -1;
+  const t = v.currentTime;
+  return it.scenes.findIndex(sc => t >= sc.start - 0.02 && t <= sc.end + 0.02);
+}
+
+// The speed that applies where the play head is: the scene's own, else the one for new scenes.
+function speedHere() {
+  const i = activeScene();
+  return i >= 0 ? current().scenes[i].speed || 1 : state.speed;
+}
+
 function setSpeed(x) {
-  state.speed = SPEEDS.includes(x) ? x : 1;
-  const v = video();
-  if (v) v.playbackRate = state.speed;
-  updatePlayButtons();
+  const speed = SPEEDS.includes(x) ? x : 1;
+  const i = activeScene();
+  if (i >= 0) {
+    if ((current().scenes[i].speed || 1) !== speed) setSceneSpeed(i, speed);
+    return;
+  }
+  state.speed = speed;
+  syncSpeedTarget(true);
 }
 
 function stepSpeed(dir) {
-  const i = SPEEDS.indexOf(state.speed);
-  setSpeed(SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + dir))]);
-  toast(`Speed ${speedLabel(state.speed)}` + (state.speed < 1 ? ' · new scenes get this slow motion' : ''));
+  const scene = activeScene();
+  const i = SPEEDS.indexOf(speedHere());
+  const next = SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + dir))];
+  setSpeed(next);
+  if (scene < 0) toast(`Speed ${speedLabel(next)}` + (next < 1 ? ' · new scenes get this slow motion' : ''));
+}
+
+// Marks the scene under the play head, plays at its speed and shows it on the buttons.
+let speedTargetKey = null;
+function syncSpeedTarget(force = false) {
+  const it = current(), v = video();
+  if (!it || !v) return;
+  const i = activeScene();
+  const speed = speedHere();
+  const key = `${it.name}#${i}@${speed}`;
+  if (key === speedTargetKey && !force) return;
+  speedTargetKey = key;
+  if (v.playbackRate !== speed) v.playbackRate = speed;
+  $('#tlScenes').querySelectorAll('.seg').forEach((el, j) => el.classList.toggle('active', j === i));
+  $('#sceneList').querySelectorAll('li').forEach((el, j) => el.classList.toggle('active', j === i));
+  const whole = i >= 0 && isWholeScene(it.scenes[i], v.duration || it.duration || 0);
+  $('#speedFor').textContent = i >= 0 ? (whole ? 'whole video' : `scene ${i + 1}`) : 'new scenes';
+  $('#speedFor').classList.toggle('scene', i >= 0);
+  updatePlayButtons();
 }
 
 function toggleMute() {
@@ -517,7 +558,8 @@ function updatePlayButtons() {
   const v = video();
   $('#playBtn').textContent = v && !v.paused ? '❚❚' : '▶';
   $('#muteBtn').textContent = state.muted ? '🔇' : '🔊';
-  for (const b of document.querySelectorAll('#speedSeg button')) b.classList.toggle('on', Number(b.dataset.speed) === state.speed);
+  const speed = speedHere();
+  for (const b of document.querySelectorAll('#speedSeg button')) b.classList.toggle('on', Number(b.dataset.speed) === speed);
 }
 
 // The timeline: click to jump, or drag to scrub.
@@ -851,10 +893,66 @@ function updateTimeline() {
     p.style.display = 'block';
     p.style.left = pct(state.pendingStart);
     p.style.width = `calc(${pct(v.currentTime)} - ${pct(state.pendingStart)})`;
+    // The scene being marked shows its length so far (at the speed new scenes get).
+    p.firstChild.textContent = fmtLen((v.currentTime - state.pendingStart) / state.speed);
   } else {
     p.style.display = 'none';
   }
   $('#timeInfo').textContent = `${fmtTime(v.currentTime)} / ${fmtTime(dur)}`;
+  syncSpeedTarget();
+}
+
+// A scene's length for the timeline: "4.5 s", or "1:32" from a minute on.
+const fmtLen = s => (s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`);
+
+const sceneBarLabel = sc => ((sc.speed || 1) < 1 ? `${speedLabel(sc.speed)} · ` : '') + fmtLen((sc.end - sc.start) / (sc.speed || 1));
+
+// The two ends of a scene on the timeline can be dragged to make it longer or shorter.
+// The video follows the dragged end, so you see the exact frame; it is saved on release.
+function sceneHandle(i, side) {
+  const h = el('div', { class: `shandle ${side}`, title: `Drag to move the scene's ${side === 'l' ? 'start' : 'end'}` });
+  h.addEventListener('pointerdown', e => startSceneResize(e, i, side));
+  return h;
+}
+
+function startSceneResize(e, i, side) {
+  e.stopPropagation(); // not a jump on the timeline
+  e.preventDefault();
+  const it = current(), v = video();
+  if (!it || !v || !v.duration) return;
+  const why = pickBlocked(it);
+  if (why) { toast(why); return; }
+  const h = e.currentTarget, seg = h.parentElement;
+  const r = $('#timeline').getBoundingClientRect(), dur = v.duration;
+  const sc0 = it.scenes[i];
+  // Not past the neighbouring scene or the video's ends, and at least 0.3 s long.
+  const lo = side === 'l' ? (i > 0 ? it.scenes[i - 1].end : 0) : sc0.start + 0.3;
+  const hi = side === 'l' ? sc0.end - 0.3 : (i < it.scenes.length - 1 ? it.scenes[i + 1].start : dur);
+  let cur = { ...sc0 };
+  v.pause();
+  h.setPointerCapture(e.pointerId);
+  seg.classList.add('resizing');
+  const move = ev => {
+    const t = Math.round(Math.max(lo, Math.min(hi, ((ev.clientX - r.left) / r.width) * dur)) * 100) / 100;
+    cur = side === 'l' ? { ...sc0, start: t } : { ...sc0, end: t };
+    seg.style.left = `${(cur.start / dur) * 100}%`;
+    seg.style.width = `${((cur.end - cur.start) / dur) * 100}%`;
+    seg.querySelector('span').textContent = sceneBarLabel(cur);
+    seek(t);
+  };
+  const up = async () => {
+    h.removeEventListener('pointermove', move);
+    h.removeEventListener('pointerup', up);
+    h.removeEventListener('pointercancel', up);
+    seg.classList.remove('resizing');
+    if (cur.start === sc0.start && cur.end === sc0.end) return;
+    // The post made from this scene keeps its caption, place in the order and texts.
+    movePostKey(sceneKey(it.name, sc0), sceneKey(it.name, cur));
+    await saveScenes(it, it.scenes.map((s, j) => (j === i ? cur : s)));
+  };
+  h.addEventListener('pointermove', move);
+  h.addEventListener('pointerup', up);
+  h.addEventListener('pointercancel', up);
 }
 
 function renderScenes() {
@@ -872,13 +970,13 @@ function renderScenes() {
       segs.append(el('div', {
         class: 'seg' + (sp < 1 ? ' slow' : ''), title: `Scene ${i + 1}` + (sp < 1 ? ` · ${speedLabel(sp)} slow motion` : ''),
         style: `left:${(sc.start / dur) * 100}%;width:${((sc.end - sc.start) / dur) * 100}%`,
-      }, sp < 1 ? speedLabel(sp) : null));
+      }, sceneHandle(i, 'l'), el('span', {}, sceneBarLabel(sc)), sceneHandle(i, 'r')));
     }
     const len = (sc.end - sc.start) / sp; // length in the release
     const speedSel = el('select', { class: 'scspeed', title: 'Speed of this scene in the release (slow motion)', onclick: e => e.stopPropagation() },
       ...SPEEDS.map(x => el('option', { value: x, selected: x === sp ? '' : null }, speedLabel(x))));
     speedSel.addEventListener('change', e => { e.stopPropagation(); setSceneSpeed(i, Number(speedSel.value)); });
-    list.append(el('li', { onclick: () => { setSpeed(sp); seek(sc.start, true); } },
+    list.append(el('li', { title: 'Click: go to this scene and play it. The speed buttons then change this scene.', onclick: () => seek(sc.start, true) },
       el('span', { class: 'dot' + (sp < 1 ? ' slow' : '') }),
       isWholeScene(sc, dur) ? `Whole video   ${fmtTime(sc.start)} → ${fmtTime(sc.end)}` : `Scene ${i + 1}   ${fmtTime(sc.start)} → ${fmtTime(sc.end)}`,
       el('span', { class: 'len' }, sp < 1 ? `${(sc.end - sc.start).toFixed(1)} s → ${len.toFixed(1)} s` : `${len.toFixed(1)} s`),
@@ -892,6 +990,7 @@ function renderScenes() {
   $('#pendingInfo').textContent = state.pendingStart != null
     ? `Start set at ${fmtTime(state.pendingStart)}, press O at the end`
     : '';
+  speedTargetKey = null; // segments and rows were rebuilt: mark the active scene again
   updateTimeline();
 }
 
@@ -984,8 +1083,8 @@ async function setSceneSpeed(i, speed) {
     const { speed: _, ...rest } = sc;
     return speed < 1 ? { ...rest, speed } : rest;
   });
-  setSpeed(speed);
   await saveScenes(it, scenes);
+  toast(`${isWholeScene(scenes[i], (video() && video().duration) || it.duration || 0) ? 'Whole video' : `Scene ${i + 1}`}: ${speed < 1 ? `${speedLabel(speed)} slow motion` : 'normal speed'}`);
 }
 
 async function deleteScene(i) {

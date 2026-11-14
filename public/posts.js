@@ -304,6 +304,23 @@ function cfgFor(e) {
   return e.cfg;
 }
 
+// A scene whose start or end was moved (dragged on the timeline in Pick) has a new
+// key: what belongs to its post moves along.
+function movePostKey(oldKey, newKey) {
+  if (oldKey === newKey) return;
+  const d = posts.data;
+  let changed = false;
+  if (d.media[oldKey]) { d.media[newKey] = d.media[oldKey]; delete d.media[oldKey]; changed = true; }
+  if (Array.isArray(d.order)) {
+    const k = d.order.indexOf(oldKey);
+    if (k >= 0) { d.order[k] = newKey; changed = true; }
+  }
+  for (const t of d.texts) if (t.after === oldKey) { t.after = newKey; changed = true; }
+  if (posts.selKey === oldKey) posts.selKey = newKey;
+  if (posts.species.has(oldKey)) { posts.species.set(newKey, posts.species.get(oldKey)); posts.species.delete(oldKey); }
+  if (changed) savePosts();
+}
+
 // ---------- drawing (shared by gallery, preview and export) ----------
 
 function mediaSize(m) {
