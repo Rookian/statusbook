@@ -876,6 +876,7 @@ function renderCard(e, num, row = null) {
   if (changes) {
     frame.append(el('span', { class: 'chip changed', title: `Changed after the release was made (${changes.join(' and ')}); updated in the release when you publish` }, '✎ Changed'));
   }
+  if (e.kind === 'media' && (row ? row.item.grade : gradeOf(e.source))) frame.append(el('span', { class: 'cgrade', title: 'Colours changed in Pick (G)' }, '🎨'));
   if (!row && e.removed) frame.append(el('div', { class: 'gone' }, 'Removed'));
   if (missing) frame.append(el('div', { class: 'gone' }, 'File missing'));
   const time = e.time ? e.time.slice(11, 16) : '';

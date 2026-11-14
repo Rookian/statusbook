@@ -17,9 +17,36 @@ const state = {
   lovedOnly: false,  // gallery shows only ♥ favorites
   speed: 1,          // playback speed in Pick; new scenes get it (slow motion)
   muted: false,
+  showReleased: false, // Pick: also show the days before the release being made
+  hideBefore: null,    // day key: days before it are left out of Pick (see updateHideBefore)
+  gradeOpen: false,   // the colour panel in Pick
+  gradeClip: null,    // copied colour settings
+  animals: new Map(), // file name -> identified animals { animals, t, ... } (null while unknown)
 };
 
 // ---------- helpers ----------
+
+// Colour grades (grade.js): shown with an SVG colour-matrix filter, one per distinct
+// grade, made when first needed. gradeCss gives the CSS / canvas filter value for it.
+const gradeOf = name => { const it = state.items.find(x => x.name === name); return (it && it.grade) || null; };
+function gradeCss(g) {
+  if (!g) return '';
+  const id = Grade.gradeId(g);
+  if (!document.getElementById(id)) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const { m, o } = Grade.gradeMatrix(g);
+    const f = document.createElementNS(ns, 'filter');
+    f.setAttribute('id', id);
+    f.setAttribute('color-interpolation-filters', 'sRGB');
+    const cm = document.createElementNS(ns, 'feColorMatrix');
+    cm.setAttribute('type', 'matrix');
+    cm.setAttribute('values', [m[0], m[1], m[2], 0, o[0], m[3], m[4], m[5], 0, o[1], m[6], m[7], m[8], 0, o[2], 0, 0, 0, 1, 0].map(v => +v.toFixed(5)).join(' '));
+    f.append(cm);
+    $('#gradeDefs defs').append(f);
+  }
+  return `url(#${id})`;
+}
+const gradeStyle = g => (g ? `filter:${gradeCss(g)}` : null);
 
 // Turned files (R / Shift+R): the original stays as it is, pictures and videos are shown
 // turned (CSS, see .rot in style.css) and the release files are made turned.
@@ -249,10 +276,9 @@ function renderTile(it, i, released = releasedFiles()) {
   const time = it.date ? it.date.slice(11, 16) : '';
   // Soft tile: the photo with rounded corners, its time and name over the bottom edge.
   return el('div', {
-    class: `tile ${st.state}` + (i === state.sel ? ' sel' : ''), 'data-i': i,
-    title: `${it.name}${time ? ` · ${time}` : ''}` + (st.state === 'sent' || st.state === 'released' ? `\nIn Release ${st.no}; can't be picked again` : '') + '\nDouble-click: real size',
+    class: `tile ${st.state}` + (i === state.sel ? ' sel' : '') + (it.grade ? ' graded' : ''), 'data-i': i,
+    title: `${it.name}${time ? ` · ${time}` : ''}` + (st.state === 'sent' || st.state === 'released' ? `\nIn Release ${st.no}; can't be picked again` : '') + '\nDouble-click: full screen',
     onclick: () => select(i),
-    ondblclick: () => viewItem(it),
   },
   el('div', { class: 'tthumb' },
     el('img', { src: thumbSrc(it), loading: 'lazy', decoding: 'async', alt: '', class: rotClass(it.rotate).trim() || null }),
@@ -260,6 +286,7 @@ function renderTile(it, i, released = releasedFiles()) {
     badge,
     st.state === 'picked' ? el('span', { class: 'ttick' }, ic('check')) : null,
     it.loved ? el('span', { class: 'theart', title: 'Favorite' }, '♥') : null,
+    it.grade ? el('span', { class: 'tgrade', title: 'Colours changed (G)' }, '🎨') : null,
     el('div', { class: 'tmeta' },
       el('b', { class: 'time' }, time,
         it.dateSource === 'file' ? el('span', { class: 'approx', title: 'No capture date in the file. Using the date it was last changed.' }, ' ≈') : null),
@@ -379,6 +406,8 @@ function renderViewer() {
   stage.replaceChildren();
   $('#videoPanel').hidden = true;
   renderStageTools();
+  renderGradePanel();
+  renderAnimals();
   if (state.focus) renderFilmstrip();
   if (!it) {
     const msg = !state.folder ? 'Choose a journey to start.'
@@ -580,6 +609,141 @@ function initTimelineDrag() {
     tl.addEventListener('pointerup', up);
     tl.addEventListener('pointercancel', up);
   });
+}
+
+// ---------- colours (G) ----------
+// Sliders for the selected file. The picture, its tile and the strip follow at once;
+// the grade is saved with the file (_grades.json) a moment after the last change.
+
+const GRADE_SLIDERS = [
+  ['uw', '🌊 Underwater', 0, 100], ['brightness', 'Brightness', -50, 50], ['contrast', 'Contrast', -50, 50],
+  ['saturation', 'Saturation', -50, 50], ['warmth', 'Warmth', -50, 50], ['tint', 'Tint', -50, 50],
+];
+const EMPTY_GRADE = { uw: 0, brightness: 0, contrast: 0, saturation: 0, warmth: 0, tint: 0 };
+
+function initGradePanel() {
+  const box = $('#gradeSliders');
+  for (const [key, label, min, max] of GRADE_SLIDERS) {
+    const input = el('input', { type: 'range', min, max, step: 1, value: 0, 'data-key': key });
+    const num = el('output', {}, '0');
+    input.addEventListener('input', () => { num.textContent = input.value; changeGrade({ [key]: Number(input.value) }); });
+    // Double-click a slider: back to 0.
+    input.addEventListener('dblclick', () => { input.value = 0; num.textContent = '0'; changeGrade({ [key]: 0 }); });
+    input.addEventListener('pointerup', () => setTimeout(() => input.blur(), 0));
+    box.append(el('label', {}, el('span', {}, label), input, num));
+  }
+  $('#gradeBtn').addEventListener('click', () => toggleGradePanel());
+  $('#gradeUw').addEventListener('click', () => underwaterFix());
+  $('#gradeAuto').addEventListener('click', autoGrade);
+  $('#gradeReset').addEventListener('click', () => { $('#gradeNote').textContent = ''; setGrade(current(), null); });
+  $('#gradeCopy').addEventListener('click', () => {
+    const it = current();
+    if (!it || !it.grade) { toast('This file has its original colours: nothing to copy'); return; }
+    state.gradeClip = { ...it.grade };
+    toast('Colour settings copied. Go to another file and click Paste.');
+  });
+  $('#gradePaste').addEventListener('click', () => {
+    if (!state.gradeClip) { toast('Copy the colour settings of a file first'); return; }
+    setGrade(current(), state.gradeClip);
+  });
+  const before = $('#gradeBefore');
+  const show = on => document.body.classList.toggle('grade-off', on);
+  before.addEventListener('pointerdown', () => show(true));
+  for (const type of ['pointerup', 'pointerleave', 'pointercancel']) before.addEventListener(type, () => { show(false); before.blur(); });
+}
+
+function toggleGradePanel(on = !state.gradeOpen) {
+  state.gradeOpen = on;
+  renderGradePanel();
+}
+
+function renderGradePanel() {
+  const it = current();
+  $('#gradePanel').hidden = !state.gradeOpen || !it;
+  $('#gradeBtn').classList.toggle('on', !!(it && it.grade));
+  if (!it || !state.gradeOpen) return;
+  const g = it.grade || EMPTY_GRADE;
+  for (const input of document.querySelectorAll('#gradeSliders input')) {
+    input.value = g[input.dataset.key] || 0;
+    input.nextElementSibling.textContent = input.value;
+  }
+}
+
+// The picture or video frame on the stage, as pixels (small), for measuring its colours.
+function stagePixels() {
+  const node = $('#stage img, #stage video');
+  if (!node) return null;
+  const w = node.videoWidth || node.naturalWidth, h = node.videoHeight || node.naturalHeight;
+  if (!w || !h) return null;
+  const c = document.createElement('canvas');
+  c.width = 96; c.height = Math.max(1, Math.round(96 * h / w));
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(node, 0, 0, c.width, c.height);
+  try { return ctx.getImageData(0, 0, c.width, c.height).data; } catch { return null; }
+}
+
+function changeGrade(patch) {
+  const it = current();
+  if (!it) return;
+  const g = { ...EMPTY_GRADE, ...(it.grade || {}), ...patch };
+  // The underwater slider needs the picture's measured colour cast: measure it on first use.
+  if (g.uw > 0 && !g.gains) {
+    const px = stagePixels();
+    if (px) g.gains = Grade.grayWorldGains(px);
+  }
+  setGrade(it, g);
+}
+
+// One click: measure the cast in what is shown now and remove most of it.
+function underwaterFix(strength) {
+  const it = current();
+  const px = stagePixels();
+  if (!it || !px) { toast('The picture is not loaded yet'); return; }
+  const g = { ...EMPTY_GRADE, ...(it.grade || {}) };
+  g.gains = Grade.grayWorldGains(px);
+  g.uw = strength != null ? strength : (g.uw || 70);
+  setGrade(it, g);
+}
+
+async function autoGrade() {
+  const it = current();
+  if (!it) return;
+  if (!posts.ai.saved) { openAiDlg(); return; }
+  const btn = $('#gradeAuto');
+  const v = video();
+  btn.disabled = true;
+  btn.textContent = '✨ Looking …';
+  try {
+    const { suggestion: s } = await api('/api/grade-suggest', { name: it.name, t: v ? v.currentTime : 0 });
+    if (current() === it) {
+      const px = s.uw > 0 ? stagePixels() : null;
+      setGrade(it, { ...s, gains: px ? Grade.grayWorldGains(px) : undefined });
+      $('#gradeNote').textContent = s.note ? `✨ ${s.note}` : '';
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+  btn.disabled = false;
+  btn.textContent = '✨ Auto';
+}
+
+let gradeSaveTimer = null;
+function setGrade(it, grade) {
+  if (!it) return;
+  const g = Grade.cleanGrade(grade);
+  if (g) it.grade = g; else delete it.grade;
+  if (current() === it) {
+    const node = $('#stage img, #stage video');
+    if (node) node.style.filter = gradeCss(it.grade);
+    refreshRow(state.sel);
+    renderGradePanel();
+    if (state.focus) renderFilmstrip();
+  }
+  if (typeof onRotated === 'function') onRotated(it); // Compose cards and preview follow
+  clearTimeout(gradeSaveTimer);
+  gradeSaveTimer = setTimeout(async () => {
+    try { await api('/api/grade', { name: it.name, grade: it.grade || null }); } catch (err) { toast('Could not save the colours: ' + err.message); }
+  }, 500);
 }
 
 // ---------- animals in the picture (A) ----------
@@ -1187,6 +1351,7 @@ function openViewer(what) {
     showSize(node.width, node.height);
   } else if (what.type === 'video') {
     node = turnableVideo(what.src, what.rotate || 0, true);
+    node.style.filter = gradeCss(what.grade);
     node.autoplay = true;
     node.playsInline = true;
     node.addEventListener('loadedmetadata', () => {
@@ -1203,7 +1368,7 @@ function openViewer(what) {
     // Double-clicking a video would otherwise switch the browser to full screen.
     node.addEventListener('dblclick', e => e.preventDefault());
   } else {
-    node = el('img', { src: what.src, alt: what.title || '', class: rotClass(what.rotate || 0).trim() || null });
+    node = el('img', { src: what.src, alt: what.title || '', class: rotClass(what.rotate || 0).trim() || null, style: gradeStyle(what.grade) });
     node.addEventListener('load', () => showSize(node.naturalWidth, node.naturalHeight));
   }
   // Turned files are shown fitted only (real size would need the layout turned too).
@@ -1231,10 +1396,10 @@ function closeViewer() {
 function viewItem(it, start = 0) {
   if (!it) return;
   if (it.type === 'video') {
-    openViewer({ title: it.name, type: 'video', src: mediaUrl(it), start, rotate: it.rotate || 0,
+    openViewer({ title: it.name, type: 'video', src: mediaUrl(it), start, rotate: it.rotate || 0, grade: it.grade,
       fallbackSrc: '/preview?name=' + encodeURIComponent(it.name) });
   } else {
-    openViewer({ title: it.name, type: 'image', src: mediaUrl(it), rotate: it.rotate || 0 });
+    openViewer({ title: it.name, type: 'image', src: mediaUrl(it), rotate: it.rotate || 0, grade: it.grade });
   }
 }
 

@@ -95,11 +95,26 @@
           <button id="jumpLastBtn" class="focus-only jump" title="Jump to the last file you picked for this release (L)">✓ Last picked</button>
           <button id="rotLeft" title="Turn 90° to the left (Shift+R)">⟲</button>
           <button id="rotRight" title="Turn 90° to the right (R)">⟳</button>
+          <button id="gradeBtn" title="Colours: underwater correction, brightness, contrast … (G)">🎨</button>
           <button id="identifyBtn" title="Identify the animals in this photo or in the video frame shown (A)">🐠</button>
           <button id="loveBtn" title="Favorite (F): keep it among your favorites, picked or not">♡</button>
           <button id="pickBtn" title="Pick this photo for the release (P)">☆ Pick</button>
           <button id="focusBtn" title="Full screen (Enter) · Esc to leave">⛶</button>
         </div>
+      </div>
+      <!-- Colours of the selected file (G): shown graded everywhere, release files are made graded. -->
+      <div id="gradePanel" hidden>
+        <div class="grow1">
+          <button id="gradeUw" title="Measures the colour cast in this picture (or video frame) and removes it: brings back the reds under water">🌊 Underwater</button>
+          <button id="gradeAuto" title="An AI model looks at the picture and sets the sliders (needs your API key, about a cent)">✨ Auto</button>
+          <button id="gradeBefore" title="Hold to see the original">Hold: before</button>
+          <span class="grow"></span>
+          <button id="gradeCopy" title="Copy these colour settings">Copy</button>
+          <button id="gradePaste" title="Use the copied colour settings for this file">Paste</button>
+          <button id="gradeReset" title="Back to the original colours">Reset</button>
+        </div>
+        <div id="gradeSliders"></div>
+        <small id="gradeNote" class="muted"></small>
       </div>
       <div id="videoPanel" hidden>
         <div id="timeline" title="Click to jump">
@@ -334,9 +349,12 @@
     <div id="viewerStage"></div>
   </dialog>
 
+  <!-- Colour grades as SVG filters, made on demand (see gradeCss in app.js). -->
+  <svg id="gradeDefs" width="0" height="0" style="position:absolute" aria-hidden="true"><defs></defs></svg>
   <div id="toast"></div>
   <script src="splash.js"></script>
   <script src="icons.js"></script>
+  <script src="grade.js"></script>
   <script src="app.js"></script>
   <script src="textsplit.js"></script>
   <script src="posts.js"></script>

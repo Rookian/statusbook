@@ -346,6 +346,42 @@ async function setRotation(folder, name, deg) {
   return d;
 }
 
+// Colour grades (public/grade.js): the originals stay untouched; the page shows them
+// graded and the release files (photos and video clips) are made graded.
+const Grade = require('./public/grade.js');
+
+async function readGrades(folder) {
+  try {
+    const j = JSON.parse(await fsp.readFile(path.join(folder, GRADES_FILE), 'utf8'));
+    const out = {};
+    for (const [k, v] of Object.entries(j.grades || {})) { const g = Grade.cleanGrade(v); if (g) out[k] = g; }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function setGrade(folder, name, grade) {
+  const all = await readGrades(folder);
+  const g = Grade.cleanGrade(grade);
+  if (g) all[name] = g; else delete all[name];
+  const file = path.join(folder, GRADES_FILE);
+  if (!Object.keys(all).length) await fsp.rm(file, { force: true });
+  else await writeJsonAtomic(file, { grades: Object.fromEntries(Object.entries(all).sort()) });
+  return g;
+}
+
+// The grade as a 3D LUT file for ffmpeg, in the preview folder. Only its bare name
+// goes into the filter (ffmpeg then runs in that folder): Windows paths with their
+// colons and backslashes would need escaping there.
+async function gradeLutFile(grade) {
+  await fsp.mkdir(PREVIEW_DIR, { recursive: true });
+  const name = `grade-${Grade.gradeId(grade)}.cube`;
+  const file = path.join(PREVIEW_DIR, name);
+  if (!fs.existsSync(file)) await fsp.writeFile(file, Grade.gradeCube(grade));
+  return name;
+}
+
 // A video's thumbnail in the gallery: the frame at this second (chosen with T), else at 1 s.
 async function readThumbTimes(folder) {
   try {
@@ -547,6 +583,17 @@ async function analysisImage(file, t) {
     fsp.rm(tmp, { force: true }).catch(() => {});
   }
 }
+
+const GRADE_PROMPT = [
+  'You are a colourist for travel photos and videos (many taken under water, some by drone or on land).',
+  'Look at this picture and suggest slider values that make it look natural, clear and pleasant, not overdone.',
+  'The sliders, applied in this order:',
+  '- "uw" (0 to 100): strength of an automatic gray-world white balance that removes a blue or green colour cast. 0 for pictures whose colours are right already (most pictures above water); typically 50 to 85 under water, less if the water should still look blue.',
+  '- "warmth" (-50 to 50): positive = more orange, negative = more blue. "tint" (-50 to 50): positive = more magenta, negative = more green.',
+  '- "saturation", "contrast", "brightness" (each -50 to 50, 0 = unchanged).',
+  'Keep the values moderate (mostly within -20 to 20) unless the picture clearly needs more. Hazy, flat pictures need contrast; dark ones brightness.',
+  'Answer with JSON only: {"uw":0,"brightness":0,"contrast":0,"saturation":0,"warmth":0,"tint":0,"note":"one short sentence on what you changed and why"}',
+].join('\n');
 
 function identifyPrompt(place) {
   return [
