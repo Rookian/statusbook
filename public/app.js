@@ -108,7 +108,8 @@ function groupLabel(key) {
 
 const current = () => state.view[state.sel] || null;
 // The gallery with the large view: Pick (inside a release) or Favorites (on its own).
-const inPickView = () => state.mode === 'pick' || state.mode === 'favorites';
+// 'browse' is Pick's view opened in full screen from Compose or Releases (see openInFocus).
+const inPickView = () => state.mode === 'pick' || state.mode === 'favorites' || state.mode === 'browse';
 const isMarked = it => (it.type === 'image' ? it.favorite : it.scenes.length > 0);
 
 const collapseKey = it => `day:${groupKey(it)}`;
@@ -148,7 +149,9 @@ function ensureVisibleSelection() {
 
 function buildView() {
   const keep = current();
-  state.view = state.items.filter(it => !state.lovedOnly || it.loved).sort((a, b) => {
+  // browseOnly: the full screen opened from Compose or Releases shows just the files of
+  // those posts (see openInFocus).
+  state.view = state.items.filter(it => (!state.lovedOnly || it.loved) && (!state.browseOnly || state.browseOnly.has(it.name))).sort((a, b) => {
     if (!a.date !== !b.date) return a.date ? -1 : 1; // undated files always last
     return (a.date || '').localeCompare(b.date || '') || a.name.localeCompare(b.name, undefined, { numeric: true });
   });
@@ -393,10 +396,13 @@ function select(i) {
   const prev = state.sel;
   state.sel = i;
   state.pendingStart = null;
+  // Another file starts at normal speed (a scene keeps its own speed anyway).
+  if (i !== prev) { state.speed = 1; speedTargetKey = null; }
   refreshRow(prev);
   refreshRow(i);
   scrollSelIntoView();
   renderViewer();
+  updatePlayButtons();
   saveView();
 }
 
@@ -610,6 +616,114 @@ function initTimelineDrag() {
     tl.addEventListener('pointercancel', up);
   });
 }
+
+// ---------- zooming into the picture ----------
+// Two fingers on a touch screen, or the mouse wheel, zoom the photo or video on the
+// stage around that spot; drag to move it; one finger sideways (not zoomed) goes to
+// the next or previous file. Uses the CSS scale / translate properties, which work on
+// top of the turn (rotation) the picture may already have.
+// makeZoom gives one area this behaviour: the stage in Pick, and the viewer that opens
+// on a double-click in Compose and Releases.
+//   node(): the picture or video in it · info: the "250 % · reset" button
+//   active(): whether zooming applies right now · onSwipe(dir): next (+1) / previous (-1)
+function makeZoom(stage, opts) {
+  const zoom = { z: 1, x: 0, y: 0 };
+
+  function apply() {
+    const node = opts.node();
+    if (zoom.z <= 1.001) { zoom.z = 1; zoom.x = 0; zoom.y = 0; }
+    // Keep the picture over the stage: it can't be dragged out of sight.
+    const mx = (zoom.z - 1) * stage.clientWidth / 2, my = (zoom.z - 1) * stage.clientHeight / 2;
+    zoom.x = Math.max(-mx, Math.min(mx, zoom.x));
+    zoom.y = Math.max(-my, Math.min(my, zoom.y));
+    if (node) {
+      node.style.scale = zoom.z === 1 ? '' : String(zoom.z);
+      node.style.translate = zoom.z === 1 ? '' : `${zoom.x}px ${zoom.y}px`;
+    }
+    stage.classList.toggle('zoomed', zoom.z > 1);
+    opts.info.hidden = zoom.z === 1;
+    opts.info.textContent = `${Math.round(zoom.z * 100)} % · reset`;
+  }
+
+  const reset = () => { zoom.z = 1; apply(); };
+
+  // Zoom by a factor around a point of the screen.
+  function zoomAt(factor, clientX, clientY) {
+    const r = stage.getBoundingClientRect();
+    const mx = clientX - (r.left + r.width / 2), my = clientY - (r.top + r.height / 2);
+    const z = Math.max(1, Math.min(10, zoom.z * factor));
+    const k = z / zoom.z;
+    zoom.x = mx - (mx - zoom.x) * k;
+    zoom.y = my - (my - zoom.y) * k;
+    zoom.z = z;
+    apply();
+  }
+
+  const pts = new Map(); // pointerId -> { x, y }
+  let last = null;       // pinch: { d, cx, cy }; drag: { x, y }
+  let moved = 0, startX = 0, startY = 0, pinched = false;
+  const pinch = () => {
+    const [a, b] = [...pts.values()];
+    return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
+  };
+  stage.addEventListener('wheel', e => {
+    if (!opts.active()) return;
+    e.preventDefault();
+    zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX, e.clientY);
+  }, { passive: false });
+  stage.addEventListener('pointerdown', e => {
+    if (!opts.active()) return;
+    if (!e.target.closest('img, video, canvas') && e.target !== stage) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1) { moved = 0; pinched = false; startX = e.clientX; startY = e.clientY; last = { x: e.clientX, y: e.clientY }; }
+    if (pts.size === 2) { last = pinch(); pinched = true; moved = 99; }
+    if (zoom.z > 1 || e.pointerType === 'touch') { try { stage.setPointerCapture(e.pointerId); } catch { /* gone */ } }
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size >= 2) {
+      const now = pinch();
+      zoom.x += now.cx - last.cx;
+      zoom.y += now.cy - last.cy;
+      zoomAt(now.d / last.d, now.cx, now.cy);
+      last = now;
+    } else if (last && last.x != null) {
+      moved = Math.max(moved, Math.hypot(e.clientX - startX, e.clientY - startY));
+      if (zoom.z > 1 && moved > 4) {
+        zoom.x += e.clientX - last.x;
+        zoom.y += e.clientY - last.y;
+        stage.classList.add('panning');
+        apply();
+      }
+      last = { x: e.clientX, y: e.clientY };
+    }
+  });
+  const end = e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    stage.classList.remove('panning');
+    // One finger sideways on the whole picture: next / previous.
+    if (opts.onSwipe && e.type === 'pointerup' && e.pointerType === 'touch' && pts.size === 0 && zoom.z === 1 && !pinched) {
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) opts.onSwipe(dx < 0 ? 1 : -1);
+    }
+    if (pts.size === 1) { const p = [...pts.values()][0]; last = { x: p.x, y: p.y }; }
+    if (pts.size === 0) last = null;
+  };
+  stage.addEventListener('pointerup', end);
+  stage.addEventListener('pointercancel', end);
+  // A drag or pinch must not count as a click (a click plays or pauses a video, or
+  // switches the viewer to real size).
+  stage.addEventListener('click', e => { if (moved > 4) { e.stopPropagation(); e.preventDefault(); moved = 0; } }, true);
+  stage.addEventListener('dragstart', e => e.preventDefault()); // no dragging the picture out of the page
+  opts.info.addEventListener('click', e => { e.stopPropagation(); reset(); });
+  window.addEventListener('resize', apply);
+  return { reset, apply, get z() { return zoom.z; } };
+}
+
+let pickZoom = null, viewerZoom = null;
+const resetZoom = () => { if (pickZoom) pickZoom.reset(); };
 
 // ---------- colours (G) ----------
 // Sliders for the selected file. The picture, its tile and the strip follow at once;
@@ -1003,9 +1117,45 @@ function toggleFocus(on = !state.focus) {
   renderStageTools();
   if (on) renderFilmstrip(); else { $('#filmstrip').replaceChildren(); delete $('#filmstrip').dataset.sig; }
   if (!on) scrollSelIntoView();
+  // Opened from Compose or Releases: back there, as it was.
+  if (!on && state.mode === 'browse') {
+    const back = state.returnMode || 'releases';
+    state.returnMode = null;
+    state.browseOnly = null;
+    buildView();
+    state.keepPlace = true;
+    setMode(back);
+    state.keepPlace = false;
+  }
 }
 
-// The files around the selected one (visible days only), the selected one in the middle.
+// The same full screen as in Pick, for a file shown in Compose or Releases: the file
+// (a video at the given second), the day strip, all keys. Leaving it goes back.
+// only: names of the files to show (the posts of Compose, or of a release part).
+function openInFocus(it, start = 0, only = null) {
+  if (!it) return;
+  state.returnMode = state.mode;
+  state.browseOnly = only && only.size ? new Set([...only, it.name]) : null;
+  buildView();
+  if (state.collapsed.has(collapseKey(it))) state.collapsed.delete(collapseKey(it));
+  setMode('browse');
+  const i = state.view.indexOf(it);
+  if (i < 0) return;
+  if (i !== state.sel) select(i); else renderViewer();
+  const v = video();
+  if (v && start) {
+    const go = () => { v.currentTime = start; };
+    if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
+  }
+  toggleFocus(true);
+}
+
+// The whole gallery as a strip (visible days only), grouped by day: a coloured bar with
+// the day's name runs over its pictures. Scroll it with the mouse wheel or by dragging
+// the scroll bar; a click selects. It is rebuilt only when the files or their marks
+// changed; moving the selection just moves the ring.
+const DAY_COLORS = ['#19a8a4', '#d98a2b', '#5b8def', '#2f9f7a', '#c75c8a', '#8a6fd1'];
+
 function renderFilmstrip() {
   const strip = $('#filmstrip');
   if (!state.focus) return;
@@ -1378,9 +1528,18 @@ function openViewer(what) {
   stage.append(node);
   $('#viewerFit').textContent = 'Real size';
   dlg.showModal();
+  if (viewerZoom) viewerZoom.reset();
+  // Really full screen, like Pick's (without it the browser's bars stay).
+  viewerOwnsFullscreen = false;
+  if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).then(() => { viewerOwnsFullscreen = true; }).catch(() => {});
+  }
 }
 
+let viewerOwnsFullscreen = false;
+
 function toggleViewerFit() {
+  if (viewerZoom) viewerZoom.reset();
   const fit = $('#viewerStage').classList.toggle('fit');
   $('#viewerFit').textContent = fit ? 'Real size' : 'Fit to window';
 }
@@ -1389,7 +1548,10 @@ function closeViewer() {
   const v = $('#viewerStage video');
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
   $('#viewerStage').replaceChildren();
-  $('#viewer-dlg').close();
+  if ($('#viewer-dlg').open) $('#viewer-dlg').close();
+  if (viewerZoom) viewerZoom.reset();
+  if (viewerOwnsFullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  viewerOwnsFullscreen = false;
 }
 
 // A file of the open folder (Pick, Arrange and Releases).
@@ -1412,12 +1574,23 @@ function onKey(e) {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   const v = video();
   const secs = e.shiftKey ? 10 : 2;
+  // , and . by their place on the keyboard (Shift gives other characters on German keyboards).
+  if (e.code === 'Period' || e.code === 'Comma') {
+    if (v) seek(v.currentTime + (e.code === 'Period' ? secs : -secs));
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   let handled = true;
   switch (e.key) {
     case 'ArrowDown': select(step(state.sel, 1)); break;
     case 'ArrowUp': select(step(state.sel, -1)); break;
-    case 'ArrowRight': if (v) seek(v.currentTime + secs); else select(step(state.sel, 1)); break;
-    case 'ArrowLeft': if (v) seek(v.currentTime - secs); else select(step(state.sel, -1)); break;
+    // ← / → always go to the next / previous file (also on a video); , and . jump
+    // inside a video (2 s, with Shift 10 s).
+    case 'ArrowRight': select(step(state.sel, 1)); break;
+    case 'ArrowLeft': select(step(state.sel, -1)); break;
+    case '.': case '>': case ':': if (v) seek(v.currentTime + secs); break;
+    case ',': case '<': case ';': if (v) seek(v.currentTime - secs); break;
     case 'c': case 'C': collapseCurrentGroup(); break;
     case ' ': togglePlay(); break;
     case 's': case 'S': if (v) stepSpeed(e.shiftKey ? -1 : 1); break;
@@ -1479,15 +1652,16 @@ function init() {
     // A bare video in the browser's full screen hides timeline and scenes: use ours.
     if (fs && fs.tagName === 'VIDEO' && inPickView()) { document.exitFullscreen().catch(() => {}); toggleFocus(true); return; }
     if (!fs && state.focus) toggleFocus(false);
+    // Esc ended the viewer's full screen: close the viewer too.
+    if (!fs && viewerOwnsFullscreen && $('#viewer-dlg').open) closeViewer();
   });
   $('#viewerClose').addEventListener('click', closeViewer);
   $('#viewerFit').addEventListener('click', toggleViewerFit);
   // A click beside the picture closes; Esc closes the dialog by itself.
   $('#viewer-dlg').addEventListener('click', e => { if (e.target.id === 'viewerStage' || e.target.id === 'viewer-dlg') closeViewer(); });
-  $('#viewer-dlg').addEventListener('close', () => {
-    const v = $('#viewerStage video');
-    if (v) v.pause();
-  });
+  // Closed with Esc: tidy up the same way as the ✕ button (video, zoom, full screen).
+  $('#viewer-dlg').addEventListener('close', closeViewer);
+  $('#viewer-dlg').addEventListener('keydown', e => { if (e.key === '0' && viewerZoom) viewerZoom.reset(); });
   // Save the very last selection too when the tab is closed right after a key press.
   window.addEventListener('pagehide', () => {
     if (!viewTimer) return;
@@ -1496,7 +1670,17 @@ function init() {
     navigator.sendBeacon('/api/view', new Blob([JSON.stringify(viewBody())], { type: 'application/json' }));
   });
 
-  loadItems().catch(err => toast(err.message));
+  // Once the journey is read: back to the step of last time (Pick and Compose need
+  // the release being made, which is only known now).
+  let savedStep = null;
+  try { savedStep = localStorage.getItem('media-picker-mode'); } catch { /* storage unavailable */ }
+  loadItems().then(() => {
+    if (state.mode === 'releases' && (savedStep === 'pick' || savedStep === 'arrange') && hasDraft()) {
+      state.keepPlace = true; // after a reload: stay on the file of last time, no jump to the release's start
+      setMode(savedStep);
+      state.keepPlace = false;
+    }
+  }).catch(err => toast(err.message));
   api('/api/state').then(s => {
     state.mapPageUrl = s.mapPageUrl || null;
     if (!s.ffmpeg) toast('ffmpeg not found: scenes cannot be exported');

@@ -87,8 +87,9 @@
       <div id="stageWrap">
         <div id="stage"><div class="empty">Choose a journey to start.</div></div>
         <!-- Over the picture: turn, pick, full screen; in full screen also previous / next. -->
-        <button id="navPrev" class="stagenav prev" title="Previous file (↑)">‹</button>
-        <button id="navNext" class="stagenav next" title="Next file (↓)">›</button>
+        <button id="navPrev" class="stagenav prev" title="Previous file (↑ or ←)">‹</button>
+        <button id="navNext" class="stagenav next" title="Next file (↓ or →)">›</button>
+        <button id="zoomInfo" hidden title="Back to the whole picture (0)"></button>
         <div id="stageTools">
           <span id="focusName" class="focus-only"></span>
           <button id="jumpStartBtn" class="focus-only jump" title="Jump to the first day of this release (B)">⇤ Release start</button>
@@ -218,8 +219,8 @@
       stars, scenes, posts and releases are kept in it
     </span>
     <span class="pick-only">
-      <b>↑ / ↓</b> next file · <b>P</b> pick a photo or a whole video · <b>Space</b> play / pause · <b>← / →</b> ±2 s (with Shift ±10 s) ·
-      <b>I</b> scene start · <b>O</b> scene end · <b>S</b> / <b>Shift+S</b> slower / faster (slow motion) · <b>M</b> sound ·
+      <b>↑ / ↓</b> next file · <b>P</b> pick a photo or a whole video · <b>Space</b> play / pause · <b>← / →</b> next file · <b>, / .</b> video −/+ 2 s (with Shift 10 s) ·
+      <b>I</b> scene start · <b>O</b> scene end · <b>S</b> / <b>Shift+S</b> slower / faster (slow motion) · <b>M</b> sound · <b>mouse wheel</b> or <b>two fingers</b> zoom (<b>0</b> resets) · <b>K</b> crop · <b>G</b> colours · <b>A</b> identify animals · <b>T</b> video thumbnail from this frame · <b>B</b> release start · <b>L</b> last picked ·
       <b>F</b> favorite · <b>R</b> / <b>Shift+R</b> turn · <b>Enter</b> full screen · <b>Esc</b> cancel start · <b>C</b> collapse day ·
       picked photos and scenes go into the release you are making; released files can't be picked again
     </span>
@@ -343,10 +344,12 @@
       <span id="viewerTitle"></span>
       <span id="viewerInfo" class="muted"></span>
       <span class="grow"></span>
+      <span class="muted viewer-hint">Two fingers or mouse wheel: zoom</span>
       <button id="viewerFit" title="Switch between fit to window and real size">Real size</button>
       <button id="viewerClose" title="Close (Esc)">✕</button>
     </div>
     <div id="viewerStage"></div>
+    <button id="viewerZoomInfo" hidden title="Back to the whole picture (0)"></button>
   </dialog>
 
   <!-- Colour grades as SVG filters, made on demand (see gradeCss in app.js). -->

@@ -831,7 +831,11 @@ function goneCard(row, num) {
     title: `${item.file}\n` + (auto
       ? `Added at the start of this part${auto === 'continuation' ? ' (the day continues from before)' : ''}`
       : 'No longer a post here (unstarred, scene changed or deleted)') + ' · double-click: the released file',
-    ondblclick: () => openViewer({ title: item.file, type: item.type === 'video' ? 'video' : 'image', src: row.src }),
+    ondblclick: () => {
+      const it = item.type !== 'text' && item.source && state.items.find(x => x.name === item.source);
+      if (it) openInFocus(it, item.start || 0, partFiles(row));
+      else openViewer({ title: item.file, type: item.type === 'video' ? 'video' : 'image', src: row.src });
+    },
   }, frame,
   el('div', { class: 'meta' }, el('span', { class: 'num' }, num),
     el('span', { class: 'name' }, auto === 'continuation' ? 'Day intro · Fortsetzung' : auto ? 'Day intro (added)' : item.file)),
@@ -890,7 +894,12 @@ function renderCard(e, num, row = null) {
       : (e.type === 'text' ? (v.text || 'Text post') : e.source) + '\nDrag to move · double-click: real size',
     onclick: () => selectEntry(e.key),
     ondblclick: row
-      ? () => openViewer({ title: row.item.file, type: row.item.type === 'video' ? 'video' : 'image', src: row.src })
+      ? () => {
+        // A released photo or video: its original in the full screen, else the released file.
+        const it = row.item.source && state.items.find(x => x.name === row.item.source);
+        if (it) openInFocus(it, row.item.start || 0, partFiles(row));
+        else openViewer({ title: row.item.file, type: row.item.type === 'video' ? 'video' : 'image', src: row.src });
+      }
       : () => viewPost(e),
   },
   frame,
@@ -911,8 +920,28 @@ function renderCard(e, num, row = null) {
 
 // Double-click on a card: the photo or video at real size (a scene from its start),
 // a text post or day intro as the finished 1080×1920 picture.
+// The files whose posts are around a post: in Compose all media posts of the release
+// being made; in Releases those of the part the post belongs to.
+function browseFiles(e) {
+  if (state.mode === 'arrange' || isNew(e)) {
+    return new Set(posts.entries.filter(x => x.kind === 'media' && isNew(x) && !x.removed).map(x => x.source));
+  }
+  return null;
+}
+
+function partFiles(row) {
+  for (const r of posts.releases) {
+    if (r.release !== row.release) continue;
+    const p = r.parts.find(x => x.part === row.part);
+    if (p) return new Set(p.items.map(i => i.source).filter(Boolean));
+  }
+  return null;
+}
+
 async function viewPost(e) {
-  if (e.kind === 'media' && e.item) { viewItem(e.item, e.start || 0); return; }
+  // Compose: the files of the release being made (not removed ones); Releases: the
+  // files of the part this post is in.
+  if (e.kind === 'media' && e.item) { openInFocus(e.item, e.start || 0, browseFiles(e)); return; }
   const v = postView(e);
   if (v.intro) {
     const s = dayMapState(v.intro.day);
@@ -2366,8 +2395,8 @@ const chevron = (key, open) => el('button', {
 // Inside a journey: Releases (the draft and the releases), Pick (the gallery, picking
 // for the draft) and Arrange (the draft's posts). Releases and Arrange share the posts
 // view. "journeys" is the list of journeys (journeys.js).
-const MODES = ['releases', 'pick', 'arrange', 'favorites', 'journeys'];
-const MODE_VIEW = { releases: 'postsView', pick: 'pickView', arrange: 'postsView', favorites: 'pickView', journeys: 'journeysView' };
+const MODES = ['releases', 'pick', 'arrange', 'favorites', 'browse', 'journeys'];
+const MODE_VIEW = { releases: 'postsView', pick: 'pickView', arrange: 'postsView', favorites: 'pickView', browse: 'pickView', journeys: 'journeysView' };
 const inPostsView = () => state.mode === 'releases' || state.mode === 'arrange';
 
 // The step you were in last time (Releases if none, or from older versions).
@@ -2392,7 +2421,7 @@ function setMode(mode, force = false) {
     if (tab) tab.classList.toggle('on', m === mode);
   }
   // Favorites uses the Pick view (gallery and large view), without picking.
-  if (mode === 'favorites') document.body.classList.add('mode-pick');
+  if (mode === 'favorites' || mode === 'browse') document.body.classList.add('mode-pick');
   // Inside the release being made (Pick, Compose): its name and steps in the header.
   document.body.classList.toggle('in-draft', mode === 'pick' || mode === 'arrange');
   $('#draftLabel').textContent = hasDraft() ? draftTitle() : 'New release';
@@ -2410,14 +2439,14 @@ function setMode(mode, force = false) {
     renderStageTools();
     renderPickBar();
     // Back to the release being made: start at the first day that isn't released yet.
-    if (mode === 'pick' && cameFrom !== 'pick' && hasDraft()) jumpToNewDays();
+    if (mode === 'pick' && cameFrom !== 'pick' && hasDraft() && !state.keepPlace) jumpToNewDays();
   }
   if (inPostsView()) {
     // Only posts of this view can stay selected.
     if (mode === 'arrange' && posts.selKey && !isNew({ key: posts.selKey })) posts.selKey = null;
     refreshPosts();
     // Back to the release being made: start at its first (oldest) post, at the top.
-    if (mode === 'arrange' && cameFrom !== 'arrange') {
+    if (mode === 'arrange' && cameFrom !== 'arrange' && !state.keepPlace) {
       const first = $('#gallery .card[data-key]:not(.slot):not(.rel)');
       if (first) selectEntry(first.dataset.key);
       $('#gallery').scrollTop = 0;
@@ -2439,7 +2468,7 @@ function setMode(mode, force = false) {
     flushPosts();
   }
   // The step to come back to in a journey (the journeys list is not one).
-  if (mode !== 'journeys') try { localStorage.setItem('media-picker-mode', mode); } catch { /* storage unavailable */ }
+  if (mode !== 'journeys' && mode !== 'browse') try { localStorage.setItem('media-picker-mode', mode); } catch { /* storage unavailable */ }
 }
 
 function onPostsKey(e) {

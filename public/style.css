@@ -426,8 +426,20 @@ dialog ol.steps { padding-left: 20px; margin: 8px 0; display: flex; flex-directi
 .folder-row { display: flex; gap: 8px; }
 .folder-row input { flex: 1; }
 
-/* scrollbars in stone colors */
-* { scrollbar-width: thin; scrollbar-color: rgba(12, 53, 50, .25) transparent; }
+/* Scroll bars: wide enough to grab, a lagoon-coloured pill on a soft track. They grow
+   a little when the mouse is over them. (Dark areas get a light version, see below.) */
+::-webkit-scrollbar { width: 16px; height: 16px; }
+::-webkit-scrollbar-track { background: rgba(12, 53, 50, .07); border-radius: 999px; margin: 6px; border: 4px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb { border-radius: 999px; border: 4px solid transparent; background-clip: padding-box; min-height: 56px; min-width: 56px;
+  background-image: linear-gradient(180deg, #25c0b8, #19a8a4 55%, #2f9f7a); }
+::-webkit-scrollbar-thumb:horizontal { background-image: linear-gradient(90deg, #25c0b8, #19a8a4 55%, #2f9f7a); }
+::-webkit-scrollbar-thumb:hover { border-width: 2px; background-image: linear-gradient(180deg, #19a8a4, #0f8a86 55%, #237a5e); }
+::-webkit-scrollbar-thumb:horizontal:hover { background-image: linear-gradient(90deg, #19a8a4, #0f8a86 55%, #237a5e); }
+::-webkit-scrollbar-thumb:active { border-width: 2px; background-image: none; background-color: var(--ink); }
+::-webkit-scrollbar-corner { background: transparent; }
+body.focus ::-webkit-scrollbar-track, #viewer-dlg ::-webkit-scrollbar-track, #filmstrip::-webkit-scrollbar-track { background-color: rgba(255, 255, 255, .1); }
+body.focus ::-webkit-scrollbar-thumb:active, #viewer-dlg ::-webkit-scrollbar-thumb:active, #filmstrip::-webkit-scrollbar-thumb:active { background-color: #fff; }
+textarea::-webkit-scrollbar, select::-webkit-scrollbar { width: 12px; }
 
 @media (max-width: 700px) {
   main { flex-direction: column; }
@@ -552,7 +564,7 @@ body.focus #sceneBar button:hover { background: rgba(25, 168, 164, .85); }
 body.focus #sceneList li:hover { background: rgba(255, 255, 255, .06); }
 body.focus #sceneList .len, body.focus #sceneList .del, body.focus #timeInfo, body.focus #pendingInfo { color: rgba(255, 255, 255, .65); }
 body.focus #infoBar { color: rgba(255, 255, 255, .6); border-top-color: rgba(255, 255, 255, .08); }
-#filmstrip { display: flex; gap: 8px; padding: 10px 14px; overflow-x: auto; flex: none; border-top: 1px solid rgba(255, 255, 255, .08); scrollbar-width: thin; }
+#filmstrip { display: flex; gap: 8px; padding: 10px 14px; overflow-x: auto; flex: none; border-top: 1px solid rgba(255, 255, 255, .08); }
 .fthumb { position: relative; flex: none; width: 64px; height: 80px; border-radius: 10px; overflow: hidden; cursor: pointer; background: #234; container-type: size; opacity: .7; transition: opacity .15s, transform .15s; }
 .fthumb:hover { opacity: 1; transform: translateY(-2px); }
 .fthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -605,6 +617,7 @@ body.in-draft #tabReleases { color: rgba(255, 255, 255, .75); }
 .stepnav button.on .heart { color: #e23d5d; }
 body.mode-favorites :is(#listBar, #pickBar, #wholeVideo, #markIn, #markOut, #pendingInfo, #pickBtn, #sceneList .del) { display: none !important; }
 body.mode-favorites #sceneList .scspeed { pointer-events: none; opacity: .7; }
+
 /* ---------- animals in the picture (Compose) ---------- */
 #speciesInfo { display: flex; flex-direction: column; gap: 6px; }
 #speciesInfo .animal { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); }
@@ -685,6 +698,14 @@ body.focus #gradePanel button { background: rgba(255, 255, 255, .08); color: #ff
 body.focus #gradePanel button:hover { background: rgba(25, 168, 164, .85); }
 body.focus #gradeSliders output, body.focus #gradeNote { color: rgba(255, 255, 255, .65); }
 
+/* ---------- zooming into the picture (pinch, mouse wheel) ---------- */
+#stage { touch-action: none; }
+#stage.zoomed img, #stage.zoomed video { cursor: grab; }
+#stage.panning img, #stage.panning video { cursor: grabbing; }
+#zoomInfo { position: absolute; left: 12px; bottom: 12px; z-index: 3; border: 1px solid rgba(255, 255, 255, .25); background: rgba(8, 26, 25, .6); color: #fff; backdrop-filter: blur(8px); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+#zoomInfo:hover { background: rgba(25, 168, 164, .85); border-color: transparent; }
+#stage img, #stage video { -webkit-user-drag: none; user-select: none; }
+
 /* ---------- colour-graded files wear a palette mark ---------- */
 .tgrade, .cgrade, .fgrade { position: absolute; z-index: 2; display: grid; place-items: center; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, .35); line-height: 1; }
 .tgrade { right: 8px; bottom: 8px; width: 26px; height: 26px; font-size: 15px; }
@@ -710,5 +731,15 @@ body.focus #gradeSliders output, body.focus #gradeNote { color: rgba(255, 255, 2
 .shandle:hover, .seg.resizing .shandle { background: rgba(12, 53, 50, .45); }
 .seg.resizing { opacity: 1 !important; outline: 2px solid var(--ink); outline-offset: -2px; }
 body.focus .seg.resizing { outline-color: #fff; }
+
+/* ---------- zooming in the viewer (double-click in Compose and Releases) ---------- */
+#viewerStage.fit { touch-action: none; overflow: hidden; position: relative; }
+#viewerStage.zoomed > * { cursor: grab; }
+#viewerStage.panning > * { cursor: grabbing; }
+#viewerStage > * { -webkit-user-drag: none; user-select: none; }
+#viewerZoomInfo { position: absolute; left: 14px; bottom: 14px; z-index: 3; border: 1px solid rgba(255, 255, 255, .25); background: rgba(8, 26, 25, .6); color: #fff; backdrop-filter: blur(8px); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+#viewerZoomInfo:hover { background: rgba(25, 168, 164, .85); border-color: transparent; }
+#viewer-dlg { position: fixed; }
+.viewer-hint { font-size: 12px; margin-right: 6px; }
 
 .cmask { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
