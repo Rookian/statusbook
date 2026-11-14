@@ -480,6 +480,161 @@ async function makeThumb(file, t) {
   try { return await job; } finally { thumbJobs.delete(out); }
 }
 
+// ---------- animal identification ----------
+// "What animal is this?" for a photo or a video frame, answered by an AI vision model
+// the user has a key for (Claude, Gemini or OpenAI; settings.json, entered on the page).
+// Only runs when asked from the page. Sent: one scaled-down picture and, if known, the
+// place name. Answers are kept in _species.json in the journey's folder, so each
+// picture is asked about only once. Names come back in English and German.
+
+const SPECIES_FILE = '_species.json';
+const AI_PROVIDERS = {
+  anthropic: { label: 'Claude (Anthropic)', model: 'claude-sonnet-5-5', keyRe: /^sk-ant-[A-Za-z0-9_-]{20,200}$/ },
+  gemini: { label: 'Gemini (Google)', model: 'gemini-3.8-flash', keyRe: /^[A-Za-z0-9_-]{30,80}$/ },
+  openai: { label: 'OpenAI', model: 'gpt-5.6-terra', keyRe: /^sk-[A-Za-z0-9_-]{20,200}$/ },
+};
+const ANIMAL_GROUPS = ['fish', 'shark', 'ray', 'turtle', 'mammal', 'octopus', 'crustacean', 'snail', 'jellyfish', 'coral', 'starfish', 'eel', 'bird', 'reptile', 'other'];
+
+function aiConfig() {
+  const s = loadSettings();
+  const provider = AI_PROVIDERS[s.aiProvider] ? s.aiProvider : null;
+  if (!provider || !s.aiKey) return null;
+  return { provider, key: s.aiKey, model: s.aiModel || AI_PROVIDERS[provider].model };
+}
+
+// The picture to send: longest side at most 1568 px, turned like the file is shown.
+async function analysisImage(file, t) {
+  const ffmpeg = tool('ffmpeg');
+  const isVideo = mediaType(file) === 'video';
+  if (!ffmpeg) {
+    const st = await fsp.stat(file);
+    const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' }[path.extname(file).toLowerCase()];
+    if (isVideo || !mime || st.size > 3.5 * MB_BYTES) throw new Error('ffmpeg is needed to prepare this file for identification');
+    return { mime, data: (await fsp.readFile(file)).toString('base64') };
+  }
+  const rotate = (await readRotations(path.dirname(file)))[path.basename(file)] || 0;
+  await fsp.mkdir(PREVIEW_DIR, { recursive: true });
+  const tmp = path.join(PREVIEW_DIR, `identify-${crypto.randomBytes(6).toString('hex')}.jpg`);
+  const vf = `${TURN_FILTER[rotate] || ''}scale='min(1568,iw)':'min(1568,ih)':force_original_aspect_ratio=decrease`;
+  const frame = seek => run(ffmpeg, ['-y', '-v', 'error', ...seek, '-i', file, '-frames:v', '1', '-vf', vf, '-q:v', '3', tmp]);
+  try {
+    if (isVideo && t > 0) await frame(['-ss', String(t)]).catch(() => {});
+    if (!fs.existsSync(tmp)) await frame([]);
+    return { mime: 'image/jpeg', data: (await fsp.readFile(tmp)).toString('base64') };
+  } finally {
+    fsp.rm(tmp, { force: true }).catch(() => {});
+  }
+}
+
+function identifyPrompt(place) {
+  return [
+    'Identify the animals visible in this photo (mostly underwater: reef fish, turtles, rays, invertebrates, corals).',
+    place ? `The photo was taken at or near: ${place}. Prefer species that occur there.` : '',
+    'List up to 5 different animals, the most prominent first. If you cannot tell the species, give the genus or family instead of guessing a species.',
+    'Answer with JSON only, no other text, in this form:',
+    '{"animals":[{"en":"English common name","de":"German common name","scientific":"Scientific name","level":"species|genus|family","group":"' + ANIMAL_GROUPS.join('|') + '","confidence":"high|medium|low"}]}',
+    'Use the established German common name; if there is none, repeat the English or scientific name for "de".',
+    'If no animal can be made out, answer {"animals":[]}.',
+  ].filter(Boolean).join('\n');
+}
+
+async function askVisionModel(cfg, img, prompt) {
+  let url, headers, body, pick;
+  if (cfg.provider === 'anthropic') {
+    url = 'https://api.anthropic.com/v1/messages';
+    headers = { 'x-api-key': cfg.key, 'anthropic-version': '2023-06-01' };
+    body = { model: cfg.model, max_tokens: 1000, messages: [{ role: 'user', content: [
+      { type: 'image', source: { type: 'base64', media_type: img.mime, data: img.data } }, { type: 'text', text: prompt }] }] };
+    pick = j => (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+  } else if (cfg.provider === 'gemini') {
+    url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent`;
+    headers = { 'x-goog-api-key': cfg.key };
+    body = { contents: [{ parts: [{ inline_data: { mime_type: img.mime, data: img.data } }, { text: prompt }] }],
+      generationConfig: { responseMimeType: 'application/json' } };
+    pick = j => ((((j.candidates || [])[0] || {}).content || {}).parts || []).map(p => p.text || '').join('');
+  } else {
+    url = 'https://api.openai.com/v1/chat/completions';
+    headers = { Authorization: `Bearer ${cfg.key}` };
+    body = { model: cfg.model, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: [
+      { type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:${img.mime};base64,${img.data}` } }] }] };
+    pick = j => (((j.choices || [])[0] || {}).message || {}).content || '';
+  }
+  const name = AI_PROVIDERS[cfg.provider].label;
+  let res;
+  try {
+    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(90000) });
+  } catch {
+    throw new Error(`Identification failed: no connection to ${name}`);
+  }
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // The provider's own message (wrong key, unknown model, no credit). The key is never echoed.
+    const msg = (j.error && (j.error.message || j.error.status)) || `HTTP ${res.status}`;
+    throw new Error(`${name}: ${String(msg).replace(/\s+/g, ' ').slice(0, 240)}`);
+  }
+  return pick(j);
+}
+
+function parseAnimals(text) {
+  const m = String(text || '').match(/\{[\s\S]*\}/);
+  let j;
+  try { j = JSON.parse(m ? m[0] : ''); } catch { throw new Error('The answer could not be read. Try again.'); }
+  const str = v => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 80);
+  return (Array.isArray(j.animals) ? j.animals : []).slice(0, 5).map(a => ({
+    en: str(a.en), de: str(a.de) || str(a.en), scientific: str(a.scientific),
+    level: ['species', 'genus', 'family'].includes(a.level) ? a.level : 'species',
+    group: ANIMAL_GROUPS.includes(a.group) ? a.group : 'other',
+    confidence: ['high', 'medium', 'low'].includes(a.confidence) ? a.confidence : 'low',
+  })).filter(a => a.en || a.scientific);
+}
+
+async function readSpecies(folder) {
+  try { return JSON.parse(await fsp.readFile(path.join(folder, SPECIES_FILE), 'utf8')); } catch { return {}; }
+}
+
+const speciesKey = (name, t) => (mediaType(name) === 'video' ? `${name}@${(Math.round(t * 10) / 10).toFixed(1)}` : name);
+const identifyJobs = new Map();
+
+async function identifyAnimals(name, t, place, again) {
+  const file = fileInFolder(name);
+  const folder = currentFolder;
+  const key = speciesKey(name, t);
+  if (!again) {
+    const cached = (await readSpecies(folder))[key];
+    if (cached) return cached;
+  }
+  const cfg = aiConfig();
+  if (!cfg) throw Object.assign(new Error('No AI key is saved yet'), { code: 400 });
+  const jobKey = `${folder}|${key}`;
+  if (identifyJobs.has(jobKey)) return identifyJobs.get(jobKey);
+  const job = (async () => {
+    const img = await analysisImage(file, t);
+    const animals = parseAnimals(await askVisionModel(cfg, img, identifyPrompt(place)));
+    const result = { animals, t: mediaType(name) === 'video' ? Math.round(t * 10) / 10 : undefined,
+      provider: cfg.provider, model: cfg.model, at: stampFromDate(new Date()) };
+    const all = await readSpecies(folder);
+    all[key] = result;
+    await writeJsonAtomic(path.join(folder, SPECIES_FILE), all);
+    return result;
+  })();
+  identifyJobs.set(jobKey, job);
+  try { return await job; } finally { identifyJobs.delete(jobKey); }
+}
+
+// What is already known for a file: a photo's answer, or a video's latest answer
+// for a frame between from and to (the scene).
+async function knownSpecies(name, from, to) {
+  fileInFolder(name);
+  const all = await readSpecies(currentFolder);
+  if (mediaType(name) !== 'video') return all[name] || null;
+  let best = null;
+  for (const [k, v] of Object.entries(all)) {
+    if (!k.startsWith(name + '@') || !(v.t >= from - 0.05 && v.t <= to + 0.05)) continue;
+    if (!best || String(v.at) > String(best.at)) best = v;
+  }
+  return best;
+}
+
 // ---------- place names ----------
 // Turns coordinates into a name like "Ubud, Bali". With a Google Maps API key saved
 // (settings.json, entered by the user on the page) Google's Geocoding API is used,
@@ -1376,6 +1531,40 @@ const routes = {
     if (!/^[A-Za-z0-9_-]{30,60}$/.test(key)) throw Object.assign(new Error('That does not look like a Google API key (it usually starts with "AIza" and has 39 characters).'), { code: 400 });
     saveSettings({ googleMapsKey: key });
     return { saved: true };
+  },
+  // The page learns which provider and model are set, never the key itself.
+  'GET /api/ai-key': async () => {
+    const s = loadSettings(), cfg = aiConfig();
+    return { saved: !!cfg, provider: cfg ? cfg.provider : (AI_PROVIDERS[s.aiProvider] ? s.aiProvider : 'anthropic'),
+      model: s.aiModel || '', providers: Object.fromEntries(Object.entries(AI_PROVIDERS).map(([k, v]) => [k, { label: v.label, model: v.model }])) };
+  },
+  'POST /api/ai-key': async body => {
+    const key = String(body.key || '').trim();
+    const s = loadSettings();
+    if (body.remove) {
+      delete s.aiKey; delete s.aiProvider; delete s.aiModel;
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2));
+      return { saved: false };
+    }
+    const provider = String(body.provider || '');
+    const p = AI_PROVIDERS[provider];
+    if (!p) throw Object.assign(new Error('Choose a provider'), { code: 400 });
+    const model = String(body.model || '').trim();
+    if (model && !/^[A-Za-z0-9._:-]{2,80}$/.test(model)) throw Object.assign(new Error('That does not look like a model name'), { code: 400 });
+    // Without a new key: keep the saved one if only the model changes for the same provider.
+    if (!key && !(s.aiKey && s.aiProvider === provider)) throw Object.assign(new Error('Paste your API key first'), { code: 400 });
+    if (key && !p.keyRe.test(key)) throw Object.assign(new Error(`That does not look like a key for ${p.label}.`), { code: 400 });
+    saveSettings({ aiProvider: provider, aiModel: model || undefined, ...(key ? { aiKey: key } : {}) });
+    return { saved: true, provider, model };
+  },
+  'GET /api/identify': async (body, url) => {
+    const name = String(url.searchParams.get('name') || '');
+    return { result: await knownSpecies(name, Number(url.searchParams.get('from')) || 0, Number(url.searchParams.get('to')) || 0) };
+  },
+  'POST /api/identify': async body => {
+    const t = Math.max(0, Number(body.t) || 0);
+    const place = String(body.place || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    return { result: await identifyAnimals(String(body.name || ''), t, place, !!body.again) };
   },
   // ----- releases -----
   'POST /api/spellcheck': async body => {

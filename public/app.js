@@ -513,6 +513,74 @@ function initTimelineDrag() {
   });
 }
 
+// ---------- animals in the picture (A) ----------
+// Asks the AI model set up in Compose (own key) what animals the photo, or the video
+// frame shown right now, holds. The answer is kept with the file and shows up in
+// Compose, where a name can go into the caption.
+
+async function identifyCurrent() {
+  const it = current();
+  if (!it || state.identifying) return;
+  if (!posts.ai.saved) { openAiDlg(); return; }
+  const v = video();
+  const t = it.type === 'video' && v ? Math.round(v.currentTime * 10) / 10 : 0;
+  if (v) v.pause();
+  // The place helps to narrow down the species: the file's own, or of a photo taken close in time.
+  const g = geoFor({ item: it, type: it.type, time: it.date, source: it.name });
+  const place = g ? posts.places.get(geoKey(g)) : null;
+  const where = place ? [place.poi, place.name, place.country].filter(Boolean).join(', ') : g ? `${g.lat.toFixed(3)}, ${g.lon.toFixed(3)}` : '';
+  const known = state.animals.get(it.name);
+  const again = !!known && (it.type !== 'video' || known.t === t);
+  state.identifying = it.name;
+  renderAnimals();
+  try {
+    const res = await api('/api/identify', { name: it.name, t, place: where, again });
+    state.animals.set(it.name, res.result);
+    posts.species.clear(); // Compose reads the new answer
+  } catch (err) {
+    toast(err.message);
+  }
+  state.identifying = null;
+  if (current() === it) renderAnimals();
+}
+
+function renderAnimals() {
+  const bar = $('#animalsBar');
+  const it = current();
+  bar.replaceChildren();
+  bar.hidden = true;
+  if (!it) return;
+  if (state.identifying === it.name) {
+    bar.hidden = false;
+    bar.append(el('span', { class: 'muted' }, 'Identifying the animals …'));
+    return;
+  }
+  const known = state.animals.get(it.name);
+  if (known === undefined) {
+    // Answers from before (_species.json in the journey's folder).
+    state.animals.set(it.name, null);
+    api(`/api/identify?name=${encodeURIComponent(it.name)}&from=0&to=999999`).then(res => {
+      state.animals.set(it.name, res.result || null);
+      if (res.result && current() === it) renderAnimals();
+    }).catch(() => state.animals.delete(it.name));
+    return;
+  }
+  if (!known) return;
+  bar.hidden = false;
+  if (it.type === 'video') {
+    bar.append(el('button', { class: 'aframe', title: 'Jump to the identified frame', onclick: () => seek(known.t) }, `at ${fmtTime(known.t)}`));
+  }
+  if (!known.animals.length) bar.append(el('span', { class: 'muted' }, 'No animal could be made out. Try another frame or a closer shot.'));
+  for (const a of known.animals) {
+    const same = a.de.toLowerCase() === a.en.toLowerCase();
+    bar.append(el('span', { class: `achip ${a.confidence}`, title: [a.scientific, a.level !== 'species' ? `${a.level} only` : null, `${a.confidence} confidence`].filter(Boolean).join(' · ') },
+      el('span', {}, ANIMAL_ICON[a.group] || '🔎'),
+      el('b', {}, same ? a.de : `${a.de} · ${a.en}`),
+      a.scientific ? el('i', {}, a.scientific) : null));
+  }
+  if (known.animals.length) bar.append(el('small', { class: 'muted' }, 'Suggestions. Add a name to the caption in Compose.'));
+}
+
 // ---------- where the next release starts ----------
 // The oldest day after the newest day that has files in a release: releases follow
 // the trip, so that's where picking goes on. The day is opened if it was collapsed,

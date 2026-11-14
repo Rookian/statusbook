@@ -44,6 +44,8 @@ const posts = {
   nearby: new Map(), // "lat,lon" -> { sights, towns } around a spot (or null while unknown)
   dayMaps: new Map(), // map URL -> { img, error, loading } for day intros
   googleKey: false,  // whether a Google Maps key is saved (the key itself stays on the server)
+  ai: { saved: false, provider: 'anthropic', model: '', providers: {} }, // animal identification (key stays on the server)
+  species: new Map(), // post key -> { animals, t, ... } (or null while unknown)
 };
 
 function emptyPostsData() {
@@ -1013,6 +1015,7 @@ function renderEditor() {
   $('#introField').hidden = !isIntro;
   if (isIntro) renderIntroInfo(e);
   $('#geoField').hidden = isText;
+  $('#speciesField').hidden = isText;
   $('#pRemove').textContent = e.type === 'text' ? '🗑 Delete text post' : e.removed ? '↩ Restore post' : '✕ Remove post';
   const info = [];
   if (e.type === 'video') {
@@ -1031,7 +1034,7 @@ function renderEditor() {
   }
   if (e.removed) info.push("Removed: it won't go into the release. The pick stays in Pick.");
   $('#pInfo').textContent = info.join(' ');
-  if (e.type !== 'text') renderGeo(e);
+  if (e.type !== 'text') { renderGeo(e); renderSpecies(e); }
   renderReleaseInfo(e);
   lockEditor(e);
   drawPostPreview();
@@ -1416,6 +1419,113 @@ function renderNearby(box, e, g, place) {
   }
 }
 
+// ---------- animals in the picture ----------
+// Asks an AI model (the user's own key) what animals a photo or the video frame in the
+// preview shows. Names come in German and English; click one to add it to the caption.
+
+const ANIMAL_ICON = { fish: '🐠', shark: '🦈', ray: '🐟', turtle: '🐢', mammal: '🐬', octopus: '🐙', crustacean: '🦀', snail: '🐌',
+  jellyfish: '🪼', coral: '🪸', starfish: '⭐', eel: '🐍', bird: '🐦', reptile: '🦎', other: '🔎' };
+
+// The frame a video is asked about: where the preview stands, within the scene.
+function speciesTime(e) {
+  if (e.type !== 'video') return 0;
+  const v = posts.media instanceof HTMLVideoElement && posts.mediaKey === e.key ? posts.media : null;
+  const t = v && v.currentTime >= e.start && v.currentTime <= e.end ? v.currentTime : e.start + Math.min(1, (e.end - e.start) / 2);
+  return Math.round(t * 10) / 10;
+}
+
+function renderSpecies(e) {
+  const box = $('#speciesInfo');
+  box.replaceChildren();
+  if (e.kind !== 'media' || !e.item) return;
+  const known = posts.species.get(e.key);
+  const provider = (posts.ai.providers[posts.ai.provider] || {}).label || 'AI';
+  if (known) {
+    if (!known.animals.length) box.append(el('span', { class: 'muted' }, 'No animal could be made out' + (e.type === 'video' ? ` at ${fmtTime(known.t)}.` : '.')));
+    for (const a of known.animals) {
+      const icon = ANIMAL_ICON[a.group] || '🔎';
+      const sci = a.scientific ? ` (${a.scientific})` : '';
+      const add = name => { const line = `${icon} ${name}${sci}`; appendTo('caption', line); toast(`Added: ${line}`); };
+      const same = a.de.toLowerCase() === a.en.toLowerCase();
+      box.append(el('div', { class: 'animal' },
+        el('span', { class: 'aicon' }, icon),
+        el('div', { class: 'anames' },
+          el('b', {}, same ? a.de : `${a.de} · ${a.en}`),
+          el('small', { class: 'muted' }, ...[a.scientific && el('i', {}, a.scientific), a.level !== 'species' ? `${a.level} only` : null, `${a.confidence} confidence`]
+            .filter(Boolean).reduce((acc, x, i) => (i ? [...acc, ' · ', x] : [x]), []))),
+        el('button', { title: `Adds "${icon} ${a.de}${sci}" to the caption`, onclick: () => add(a.de) }, same ? '＋ Caption' : '＋ DE'),
+        same ? null : el('button', { title: `Adds "${icon} ${a.en}${sci}" to the caption`, onclick: () => add(a.en) }, '＋ EN')));
+    }
+    if (known.animals.length) box.append(el('small', { class: 'muted' }, 'A suggestion, not a fact: similar species are easy to mix up.'));
+  }
+  const btn = el('button', {
+    title: posts.ai.saved ? `Sends this ${e.type === 'video' ? 'video frame' : 'photo'} (scaled down) and the place name to ${provider}.` : 'Needs your own API key (Claude, Gemini or OpenAI)',
+  }, known ? (e.type === 'video' ? '🔁 Identify the frame in the preview' : '🔁 Ask again') : `🐠 Identify animals${e.type === 'video' ? ' (frame in the preview)' : ''}`);
+  btn.addEventListener('click', async () => {
+    if (!posts.ai.saved) { openAiDlg(); return; }
+    btn.disabled = true;
+    btn.textContent = `Asking ${provider} …`;
+    try {
+      const g = geoFor(e);
+      const place = g ? posts.places.get(geoKey(g)) : null;
+      const where = place ? [place.poi, place.name, place.country].filter(Boolean).join(', ')
+        : e.cfg.place ? e.cfg.place.label : g ? `${g.lat.toFixed(3)}, ${g.lon.toFixed(3)}` : '';
+      const res = await api('/api/identify', { name: e.source, t: speciesTime(e), place: where, again: !!known });
+      posts.species.set(e.key, res.result);
+    } catch (err) {
+      toast(err.message);
+    }
+    if (curEntry() === e) renderSpecies(e);
+  });
+  box.append(el('div', { class: 'arow' }, btn,
+    el('button', { class: 'linkbtn', onclick: openAiDlg }, posts.ai.saved ? `${provider} · key…` : 'Set up…')));
+  // Answers from before (_species.json in the journey's folder) show without asking again.
+  if (!posts.species.has(e.key)) {
+    posts.species.set(e.key, null);
+    const q = e.type === 'video' ? `&from=${e.start}&to=${e.end}` : '';
+    api(`/api/identify?name=${encodeURIComponent(e.source)}${q}`).then(res => {
+      if (res.result) { posts.species.set(e.key, res.result); if (curEntry() === e) renderSpecies(e); } else posts.species.delete(e.key);
+    }).catch(() => posts.species.delete(e.key));
+  }
+}
+
+async function loadAiState() {
+  try { posts.ai = await api('/api/ai-key'); } catch { /* keep what we know */ }
+}
+
+async function openAiDlg() {
+  await loadAiState();
+  const sel = $('#aiProvider');
+  sel.replaceChildren(...Object.entries(posts.ai.providers).map(([k, p]) => el('option', { value: k, selected: k === posts.ai.provider ? '' : null }, p.label)));
+  const sync = () => { $('#aiModel').placeholder = (posts.ai.providers[sel.value] || {}).model || ''; };
+  sel.onchange = () => { $('#aiModel').value = ''; sync(); };
+  sync();
+  $('#aiModel').value = posts.ai.model || '';
+  $('#aiKeyInput').value = '';
+  $('#aiKeyInput').placeholder = posts.ai.saved ? 'A key is saved. Paste a new one to replace it.' : 'Paste your key';
+  $('#aiStatus').textContent = posts.ai.saved
+    ? `✓ A key for ${(posts.ai.providers[posts.ai.provider] || {}).label} is saved.`
+    : 'No key saved yet.';
+  $('#aiRemove').hidden = !posts.ai.saved;
+  $('#aiDlg').showModal();
+}
+
+async function saveAiKey(remove) {
+  try {
+    await api('/api/ai-key', remove ? { remove: true }
+      : { provider: $('#aiProvider').value, model: $('#aiModel').value.trim(), key: $('#aiKeyInput').value.trim() });
+  } catch (err) {
+    toast(err.message);
+    return;
+  }
+  await loadAiState();
+  $('#aiKeyInput').value = '';
+  $('#aiDlg').close();
+  toast(remove ? 'Key removed' : 'Saved. Click "Identify animals" on a photo or video post.');
+  const e = curEntry();
+  if (e && e.type !== 'text') renderSpecies(e);
+}
+
 // ---------- Google Maps key ----------
 // The key goes from this field to the local server, which keeps it in settings.json;
 // the page is only ever told whether one is saved.
@@ -1513,6 +1623,7 @@ async function loadPostMedia() {
     v.src = '/preview?name=' + encodeURIComponent(e.source);
   });
   v.rot = rotOf(e.source);
+  v.srcName = e.source;
   v.defaultPlaybackRate = e.speed || 1;
   v.preservesPitch = true;
   v.addEventListener('loadedmetadata', () => { v.playbackRate = e.speed || 1; }, { once: true });
@@ -2363,6 +2474,10 @@ function initPosts() {
   $('#googleRemove').addEventListener('click', () => saveGoogleKey(''));
   $('#googleCancel').addEventListener('click', () => { $('#googleKeyInput').value = ''; $('#googleDlg').close(); });
   api('/api/google-key').then(r => { posts.googleKey = r.saved; }).catch(() => {});
+  $('#aiSave').addEventListener('click', () => saveAiKey(false));
+  $('#aiRemove').addEventListener('click', () => saveAiKey(true));
+  $('#aiCancel').addEventListener('click', () => { $('#aiKeyInput').value = ''; $('#aiDlg').close(); });
+  loadAiState();
   $('#pTextBefore').addEventListener('click', () => { const e = curEntry(); if (e) insertTextBefore(e); });
   $('#pTextAfter').addEventListener('click', () => { const e = curEntry(); if (e) insertTextAfter(e); });
   $('#postPlay').addEventListener('click', togglePostPlay);

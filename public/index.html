@@ -93,6 +93,7 @@
           <span id="focusName" class="focus-only"></span>
           <button id="rotLeft" title="Turn 90° to the left (Shift+R)">⟲</button>
           <button id="rotRight" title="Turn 90° to the right (R)">⟳</button>
+          <button id="identifyBtn" title="Identify the animals in this photo or in the video frame shown (A)">🐠</button>
           <button id="loveBtn" title="Favorite (F): keep it among your favorites, picked or not">♡</button>
           <button id="pickBtn" title="Pick this photo for the release (P)">☆ Pick</button>
           <button id="focusBtn" title="Full screen (Enter) · Esc to leave">⛶</button>
@@ -118,6 +119,7 @@
         </div>
         <ol id="sceneList"></ol>
       </div>
+      <div id="animalsBar" hidden></div>
       <div id="filmstrip" class="focus-only"></div>
       <div id="infoBar"></div>
     </section>
@@ -168,6 +170,9 @@
         <button id="pCopyCaption">📋 Copy caption</button>
         <div class="field" id="geoField"><span>Location</span>
           <div id="geoInfo"></div>
+        </div>
+        <div class="field" id="speciesField"><span>Animals in the picture</span>
+          <div id="speciesInfo"></div>
         </div>
         <div id="pRelease"></div>
         <p id="pInfo" class="muted"></p>
@@ -283,6 +288,34 @@
       <button id="googleRemove">Remove key</button>
       <button id="googleCancel">Cancel</button>
       <button id="googleSave" class="primary">Save key</button>
+    </div>
+  </dialog>
+
+  <dialog id="aiDlg">
+    <h2>Identify animals</h2>
+    <p id="aiStatus"></p>
+    <p class="muted">Statusbook can ask an AI model what fish or other animal a photo or video frame shows.
+      You need your own API key from one of these providers:</p>
+    <ol class="steps">
+      <li><b>Claude</b>: <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com → API keys</a></li>
+      <li><b>Gemini</b>: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com → Get API key</a></li>
+      <li><b>OpenAI</b>: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com → API keys</a></li>
+    </ol>
+    <label class="field"><span>Provider</span>
+      <select id="aiProvider"></select>
+    </label>
+    <label class="field"><span>Model <small class="muted">(leave empty for the default)</small></span>
+      <input type="text" id="aiModel" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="field"><span>Your API key</span>
+      <input type="password" id="aiKeyInput" autocomplete="off" spellcheck="false">
+      <small class="muted">Stored only on this PC (settings.json next to the app). Sent: one scaled-down picture and the place name,
+        and only when you click "Identify animals". Each request costs a little (about a cent or less); answers are kept, so a picture is asked about once.</small>
+    </label>
+    <div class="btns">
+      <button id="aiRemove">Remove key</button>
+      <button id="aiCancel">Cancel</button>
+      <button id="aiSave" class="primary">Save</button>
     </div>
   </dialog>
 
