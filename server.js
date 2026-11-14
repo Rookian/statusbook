@@ -1353,6 +1353,88 @@ function statusVideoArgs(src, start, end, out, limits, kbps, rotate = 0, speed =
     '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', out];
 }
 
+// ---------- sent scenes in original quality ----------
+
+// Every video scene that went out, as one cut per post: from the first to the last
+// second that was sent (a post split into pieces is one scene again).
+// [{ source, start, end, file }], oldest release first.
+async function sentScenes() {
+  const byPost = new Map();
+  for (const r of await listReleases()) {
+    for (const p of r.parts) {
+      for (const it of p.items) {
+        if (it.type !== 'video' || !it.sentAt || !it.source || !(it.end > it.start)) continue;
+        const key = it.postKey || it.key;
+        const s = byPost.get(key) || { source: it.source, start: it.start, end: it.end };
+        s.start = Math.min(s.start, it.start);
+        s.end = Math.max(s.end, it.end);
+        byPost.set(key, s);
+      }
+    }
+  }
+  const byFile = new Map();
+  for (const s of byPost.values()) {
+    const ext = path.extname(s.source).toLowerCase() === '.mov' ? '.mov' : '.mp4';
+    const file = `${path.parse(s.source).name}_${s.start.toFixed(1)}-${s.end.toFixed(1)}s${ext}`;
+    byFile.set(file, { ...s, file });
+  }
+  return [...byFile.values()];
+}
+
+// Where the sent scenes of a journey folder were exported last (app settings).
+const exportDest = folder => (loadSettings().exportDest || {})[String(folder).toLowerCase()] || null;
+
+let originalsJob = null;
+
+// Cuts every sent scene from its original into dest, without re-encoding (stream
+// copy): picture and sound stay exactly as recorded. Such a cut can only begin on a
+// key frame, so a file may start a moment before its scene. Files that are already
+// there are skipped, so a later run only adds what was sent since.
+function startOriginalsExport(dest, scenes) {
+  const ffmpeg = tool('ffmpeg');
+  const folder = currentFolder;
+  const job = originalsJob = {
+    running: true, dest, total: scenes.length, done: 0, made: 0, skipped: 0, bytes: 0,
+    current: null, errors: [], stopRequested: false, stopped: false,
+  };
+  (async () => {
+    try {
+      await fsp.mkdir(dest, { recursive: true });
+      for (const s of scenes) {
+        if (job.stopRequested) { job.stopped = true; break; }
+        job.current = s.file;
+        const out = path.join(dest, s.file), tmp = out + '.part';
+        try {
+          const have = await fsp.stat(out).catch(() => null);
+          if (have && have.size > 0) {
+            job.skipped++;
+          } else {
+            const src = path.join(folder, path.basename(s.source));
+            await run(ffmpeg, ['-y', '-v', 'error', '-ss', String(s.start), '-t', String(s.end - s.start), '-i', src,
+              '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-map_metadata', '0',
+              '-avoid_negative_ts', 'make_zero', '-movflags', '+faststart', '-f', path.extname(out) === '.mov' ? 'mov' : 'mp4', tmp]);
+            const st = await fsp.stat(src);
+            await fsp.utimes(tmp, st.atime, st.mtime);
+            await fsp.rename(tmp, out);
+            job.made++;
+            job.bytes += (await fsp.stat(out)).size;
+          }
+        } catch (err) {
+          await fsp.unlink(tmp).catch(() => {});
+          job.errors.push(`${s.file}: ${(err.stderr || err.message || '').trim().split('\n').pop() || 'could not be cut'}`);
+        }
+        job.done++;
+      }
+    } catch (err) {
+      job.errors.push(err.message || String(err));
+    } finally {
+      job.running = false;
+      job.current = null;
+    }
+  })();
+  return job;
+}
+
 // ---------- folder dialog ----------
 
 let pickJob = null;
@@ -1360,15 +1442,15 @@ let pickJob = null;
 // Windows won't let a background process put a window in front of the browser,
 // so the dialog gets an invisible always-on-top owner; owned windows stay above
 // their owner. Only one dialog at a time: repeated clicks wait for the same one.
-function pickFolder(start) {
+function pickFolder(start, description = 'Choose a folder with photos and videos', newFolder = false) {
   if (pickJob) return pickJob;
   const from = start || currentFolder;
   const script = [
     '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
     'Add-Type -AssemblyName System.Windows.Forms, System.Drawing',
     '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
-    "$d.Description = 'Choose a folder with photos and videos'",
-    '$d.ShowNewFolderButton = $false',
+    `$d.Description = '${description.replace(/'/g, "''")}'`,
+    `$d.ShowNewFolderButton = $${newFolder ? 'true' : 'false'}`,
     from ? `$d.SelectedPath = '${String(from).replace(/'/g, "''")}'` : '',
     '$owner = New-Object System.Windows.Forms.Form',
     '$owner.TopMost = $true',
@@ -1692,6 +1774,33 @@ const routes = {
     const file = fileInFolder(body.name);
     if (mediaType(body.name) !== 'video') throw Object.assign(new Error('Scenes need a video'), { code: 400 });
     return { scenes: await writeScenes(file, Array.isArray(body.scenes) ? body.scenes : []) };
+  },
+  // Sent scenes in original quality, exported to a folder of the user's choice.
+  'GET /api/originals': async () => ({
+    dest: currentFolder ? exportDest(currentFolder) : null,
+    scenes: currentFolder ? (await sentScenes()).length : 0,
+    job: originalsJob,
+  }),
+  'POST /api/originals/pick': async body => ({
+    folder: await pickFolder(body.start || null, 'Choose the folder for the sent scenes in original quality', true),
+  }),
+  'POST /api/originals/export': async body => {
+    if (!currentFolder) throw Object.assign(new Error('No folder is open'), { code: 400 });
+    if (!tool('ffmpeg')) throw new Error('ffmpeg is not installed');
+    if (originalsJob && originalsJob.running) throw Object.assign(new Error('An export is running already'), { code: 409 });
+    const dest = String(body.dest || '').trim();
+    if (!dest || !path.isAbsolute(dest)) throw Object.assign(new Error('Choose a folder first'), { code: 400 });
+    saveSettings({ exportDest: { ...(loadSettings().exportDest || {}), [currentFolder.toLowerCase()]: dest } });
+    return { job: startOriginalsExport(dest, await sentScenes()) };
+  },
+  'POST /api/originals/stop': async () => {
+    if (originalsJob && originalsJob.running) originalsJob.stopRequested = true;
+    return { job: originalsJob };
+  },
+  'POST /api/originals/reveal': async () => {
+    const dir = originalsJob ? originalsJob.dest : currentFolder && exportDest(currentFolder);
+    if (dir) spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref();
+    return { ok: true };
   },
   'POST /api/reveal': async body => {
     const dir = body.release && currentFolder ? releaseDir(body.release, body.part || null)
