@@ -86,7 +86,15 @@ const isMarked = it => (it.type === 'image' ? it.favorite : it.scenes.length > 0
 
 const collapseKey = it => `day:${groupKey(it)}`;
 // In the favorites view every day is open: it only holds favorites anyway.
-const isHidden = it => !state.lovedOnly && state.collapsed.has(collapseKey(it));
+const isHidden = it => !state.lovedOnly && (state.collapsed.has(collapseKey(it)) || isBeforeRelease(it));
+// Pick shows the release being made: the days before its start (released already)
+// are left out unless "Show earlier days" is on. Favorites shows everything.
+const isBeforeRelease = it => !!state.hideBefore && groupKey(it) !== 'unknown' && groupKey(it) < state.hideBefore;
+
+function updateHideBefore(released) {
+  const start = state.mode === 'pick' && !state.lovedOnly && !state.showReleased ? newReleaseStart(released) : null;
+  state.hideBefore = start && start.after ? start.day : null;
+}
 
 // Next visible index from `from` in direction `dir` (+1 / -1), or -1 if none.
 function step(from, dir) {
@@ -176,6 +184,11 @@ function renderList() {
     return;
   }
   const released = releasedFiles();
+  // Days before the release leave the gallery; a selection among them moves to its start.
+  updateHideBefore(released);
+  const selBefore = current();
+  ensureVisibleSelection();
+  if (current() !== selBefore) queueMicrotask(renderViewer);
   const stats = {};
   for (const it of state.view) {
     const s = stats[groupKey(it)] || (stats[groupKey(it)] = { count: 0, picked: 0, released: 0, sent: 0, leftout: 0 });
@@ -183,9 +196,20 @@ function renderList() {
     s[fileStatus(it, released).state]++;
   }
   let lastKey = null, grid = null;
+  const start = state.lovedOnly ? null : newReleaseStart(released);
+  const earlier = start && start.after ? new Set(state.view.filter(it => groupKey(it) !== 'unknown' && groupKey(it) < start.day).map(groupKey)).size : 0;
   state.view.forEach((it, i) => {
     const key = groupKey(it);
+    if (isBeforeRelease(it)) return;
     if (key !== lastKey) {
+      // The border between what is released already and the days still open.
+      if (start && start.after && key === start.day && state.mode === 'pick') {
+        list.append(el('div', { class: 'relstart', title: 'The days before this line are in a release already' },
+          ic('next'), newReleaseLabel(),
+          el('span', { class: 'grow' }),
+          el('button', { class: 'linkbtn', onclick: () => { state.showReleased = !state.showReleased; renderList(); if (state.focus) renderFilmstrip(); } },
+            state.showReleased ? 'Hide earlier days' : `Show ${earlier} earlier day${earlier === 1 ? '' : 's'}`)));
+      }
       list.append(renderGroupHeader(key, stats[key], isHidden(it), state.lovedOnly ? null : collapseKey(it)));
       grid = el('div', { class: 'pgrid' });
       list.append(grid);
@@ -212,7 +236,8 @@ function renderGroupHeader(key, s, closed, ckey) {
   el('span', { class: 'count' }, facts.join(' · ')));
 }
 
-const thumbSrc = it => `/thumb?name=${encodeURIComponent(it.name)}` + (it.type === 'video' ? '&t=1' : '');
+// A video's thumbnail: the frame chosen with T, else the one at 1 s.
+const thumbSrc = it => `/thumb?name=${encodeURIComponent(it.name)}` + (it.type === 'video' ? `&t=${it.thumbT != null ? it.thumbT : 1}` : '');
 
 function renderTile(it, i, released = releasedFiles()) {
   const st = fileStatus(it, released);
@@ -261,6 +286,8 @@ function renderPickBar() {
     const n = exportEntries().filter(isNew).length;
     bar.append(el('span', {}, 'Picking for ', el('b', {}, draftTitle()), ` · ${n} post${n === 1 ? '' : 's'}`),
       el('span', { class: 'grow' }),
+      el('button', { onclick: jumpToNewDays, title: 'Jump to the first day of this release (B)' }, 'Release start'),
+      el('button', { onclick: jumpToLastPicked, title: 'Jump to the last file you picked for this release (L)' }, 'Last picked'),
       el('button', { onclick: () => setMode('arrange'), title: 'Step 2: captions, text posts, day intros, order' }, 'Next: Compose', ic('next')));
   } else {
     bar.classList.add('none');
@@ -585,19 +612,29 @@ function renderAnimals() {
 // The oldest day after the newest day that has files in a release: releases follow
 // the trip, so that's where picking goes on. The day is opened if it was collapsed,
 // its first file selected and its heading scrolled to the top.
-function jumpToNewDays() {
-  if (state.lovedOnly || !state.view.length) return;
-  const released = releasedFiles();
+// { index, day, after }: the first file of that day, the day's key, and whether
+// anything was released before it (only then is there a border to mark).
+function newReleaseStart(released = releasedFiles()) {
   let last = null;
   for (const it of state.view) {
     const k = groupKey(it);
     if (k !== 'unknown' && released.has(it.name) && (!last || k > last)) last = k;
   }
-  const target = state.view.findIndex(it => {
+  const index = state.view.findIndex(it => {
     const k = groupKey(it);
     return k !== 'unknown' && (!last || k > last) && !released.has(it.name);
   });
-  if (target < 0) return;
+  return index < 0 ? null : { index, day: groupKey(state.view[index]), after: !!last };
+}
+
+// What the mark says: the release being made, or the one that would come next.
+const newReleaseLabel = () => `${draftTitle()} starts here`;
+
+function jumpToNewDays() {
+  if (state.lovedOnly || !state.view.length) return;
+  const start = newReleaseStart();
+  if (!start) return;
+  const target = start.index;
   const ckey = collapseKey(state.view[target]);
   if (state.collapsed.has(ckey)) state.collapsed.delete(ckey);
   const changed = target !== state.sel;
@@ -608,7 +645,49 @@ function jumpToNewDays() {
   saveView();
   const tile = $(`#list .tile[data-i="${target}"]`);
   const head = tile && tile.parentElement && tile.parentElement.previousElementSibling;
-  if (head) head.scrollIntoView({ block: 'start' });
+  // Show the "starts here" line above the day's heading too, if it is there.
+  const mark = head && head.previousElementSibling;
+  if (head) (mark && mark.classList.contains('relstart') ? mark : head).scrollIntoView({ block: 'start' });
+}
+
+// The last file (in the gallery's order) picked for the release being made: where
+// picking usually goes on.
+function jumpToLastPicked() {
+  const released = releasedFiles();
+  let target = -1;
+  state.view.forEach((it, i) => { if (fileStatus(it, released).state === 'picked') target = i; });
+  if (target < 0) { toast('Nothing is picked for this release yet'); return; }
+  const ckey = collapseKey(state.view[target]);
+  if (state.collapsed.has(ckey)) state.collapsed.delete(ckey);
+  const changed = target !== state.sel;
+  state.sel = target;
+  state.pendingStart = null;
+  renderList();
+  if (changed) renderViewer();
+  saveView();
+  const tile = $(`#list .tile[data-i="${target}"]`);
+  if (tile) tile.scrollIntoView({ block: 'center' });
+}
+
+// T: the frame shown right now becomes the video's thumbnail in the gallery and the
+// strip (Shift+T: back to the usual one).
+async function setThumbFrame(reset) {
+  const it = current(), v = video();
+  if (!it || it.type !== 'video' || !v) { toast('Thumbnails can be chosen for videos'); return; }
+  const before = it.thumbT;
+  const apply = t => {
+    if (t == null) delete it.thumbT; else it.thumbT = t;
+    refreshRow(state.sel);
+    if (state.focus) renderFilmstrip();
+  };
+  apply(reset ? null : Math.round(v.currentTime * 10) / 10);
+  toast(reset ? 'Thumbnail back to the usual frame' : `Thumbnail: the frame at ${fmtTime(it.thumbT)}`);
+  try {
+    await api('/api/thumb-time', { name: it.name, t: reset ? null : it.thumbT });
+  } catch (err) {
+    apply(before == null ? null : before);
+    toast('Could not save: ' + err.message);
+  }
 }
 
 // ---------- favorites (♥, F): kept apart from picking for a release (P) ----------
@@ -716,7 +795,7 @@ function toggleFocus(on = !state.focus) {
     document.exitFullscreen().catch(() => {});
   }
   renderStageTools();
-  if (on) renderFilmstrip(); else $('#filmstrip').replaceChildren();
+  if (on) renderFilmstrip(); else { $('#filmstrip').replaceChildren(); delete $('#filmstrip').dataset.sig; }
   if (!on) scrollSelIntoView();
 }
 

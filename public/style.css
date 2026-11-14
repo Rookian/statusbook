@@ -628,3 +628,33 @@ body.focus #animalsBar .achip.low { background: rgba(255, 255, 255, .08); color:
 body.focus #animalsBar .muted { color: rgba(255, 255, 255, .6); }
 body.focus #animalsBar .aframe { background: rgba(255, 255, 255, .08); color: #fff; border-color: rgba(255, 255, 255, .2); }
 
+/* ---------- full screen strip: the whole gallery, a coloured bar per day ---------- */
+#filmstrip { gap: 14px; padding: 8px 14px 6px; align-items: flex-start; }
+.fday { flex: none; display: flex; flex-direction: column; gap: 6px; }
+.fdaybar { height: 22px; border-radius: 7px; background: var(--day); color: #fff; font-size: 12px; line-height: 22px; white-space: nowrap; overflow: clip; }
+.fdaybar span { position: sticky; left: 0; display: inline-block; padding: 0 10px; text-shadow: 0 1px 2px rgba(0, 0, 0, .35); }
+.frow { display: flex; gap: 6px; padding: 3px 3px 5px; border-bottom: 3px solid var(--day); border-radius: 0 0 4px 4px; }
+.fthumb.sel { outline-color: #fff; }
+/* every picture wears its day's colour as a border */
+#filmstrip .fthumb { border: 3px solid var(--day); box-sizing: content-box; }
+#filmstrip .fthumb.picked { box-shadow: inset 0 0 0 2px #fff; }
+#filmstrip .frow { border-bottom: none; padding-bottom: 3px; }
+
+/* ---------- where the new release begins (gallery and full screen strip) ---------- */
+.relstart { display: flex; align-items: center; gap: 8px; margin: 18px 2px 4px; padding: 7px 14px; border-radius: 12px; background: var(--ink); color: #fff; font-size: 12.5px; font-weight: 700; letter-spacing: .04em; }
+.relstart .icon { width: 15px; height: 15px; }
+.fstart { flex: none; align-self: stretch; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0 12px; border-radius: 10px; background: #fff; color: var(--ink); text-align: center; white-space: nowrap; }
+.fstart b { font-size: 13px; }
+.fstart span { font-size: 11.5px; }
+.fstart i { font-style: normal; font-size: 11px; margin-top: 2px; }
+#filmstrip .fthumb.sent, #filmstrip .fthumb.released { opacity: .45; }
+
+/* ---------- jumps in the release (start, last picked) and the earlier days ---------- */
+.relstart .grow { flex: 1; }
+.relstart .linkbtn { background: none; border: none; padding: 0; color: #9be3dc; cursor: pointer; font-size: 12px; font-weight: 600; text-decoration: underline; }
+#pickBar button { white-space: nowrap; }
+#stageTools .jump { font-size: 12.5px; }
+body.mode-favorites #stageTools .jump { display: none !important; }
+#focusName { margin-right: auto; }
+
+/* ---------- the scene the speed buttons work on ---------- */

@@ -346,6 +346,28 @@ async function setRotation(folder, name, deg) {
   return d;
 }
 
+// A video's thumbnail in the gallery: the frame at this second (chosen with T), else at 1 s.
+async function readThumbTimes(folder) {
+  try {
+    const j = JSON.parse(await fsp.readFile(path.join(folder, THUMBS_FILE), 'utf8'));
+    const out = {};
+    for (const [k, v] of Object.entries(j.thumbs || {})) if (Number.isFinite(v) && v >= 0) out[k] = v;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function setThumbTime(folder, name, t) {
+  const all = await readThumbTimes(folder);
+  const v = Number.isFinite(t) && t >= 0 ? Math.round(t * 10) / 10 : null;
+  if (v == null) delete all[name]; else all[name] = v;
+  const file = path.join(folder, THUMBS_FILE);
+  if (!Object.keys(all).length) await fsp.rm(file, { force: true });
+  else await writeJsonAtomic(file, { thumbs: Object.fromEntries(Object.entries(all).sort()) });
+  return v;
+}
+
 async function readScenes(videoFile) {
   try {
     const j = JSON.parse(await fsp.readFile(videoFile + CUTS_SUFFIX, 'utf8'));
@@ -405,7 +427,7 @@ async function scanFolder(folder) {
         item.rotate = rots[e.name] || 0;
         item.loved = loved.has(e.name);
         if (type === 'image') item.favorite = favs.has(e.name);
-        else item.scenes = await readScenes(full);
+        else { item.scenes = await readScenes(full); if (thumbTimes[e.name] != null) item.thumbT = thumbTimes[e.name]; }
         items.push(item);
       } catch { /* file vanished or unreadable */ }
     });
