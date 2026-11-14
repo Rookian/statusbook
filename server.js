@@ -21,6 +21,9 @@ const PREVIEW_DIR = path.join(os.tmpdir(), 'media-picker-previews');
 const EXPORT_DIR_NAME = 'WhatsApp';
 const FAVORITES_FILE = '_favorites.json';
 const LOVED_FILE = '_loved.json'; // ♥ favorites (photos and videos), separate from picks
+const CROPS_FILE = '_crops.json'; // { crops: { "name.jpg": { x, y, w, h } } }: fractions of the picture as shown (after turning)
+const GRADES_FILE = '_grades.json'; // { grades: { "name.jpg": { uw, gains, brightness, ... } } }, see public/grade.js
+const THUMBS_FILE = '_thumbs.json'; // { thumbs: { "clip.mp4": 12.3 } }: the frame shown as a video's thumbnail
 const ROTATIONS_FILE = '_rotations.json'; // { rotations: { "name.jpg": 90 } }, clockwise degrees
 const CUTS_SUFFIX = '.cuts.json';
 const POSTS_FILE = '_posts.json';
@@ -346,6 +349,40 @@ async function setRotation(folder, name, deg) {
   return d;
 }
 
+// Crops: the part of the picture that is kept, as fractions of the picture as it is
+// shown (after turning). The originals stay untouched; release files are made cropped.
+function cleanCrop(c) {
+  if (!c || typeof c !== 'object') return null;
+  const r = v => Math.round(Math.max(0, Math.min(1, Number(v) || 0)) * 10000) / 10000;
+  const out = { x: r(c.x), y: r(c.y), w: r(c.w), h: r(c.h) };
+  out.w = Math.min(out.w, 1 - out.x);
+  out.h = Math.min(out.h, 1 - out.y);
+  if (out.w < 0.02 || out.h < 0.02) return null;
+  if (out.x < 0.001 && out.y < 0.001 && out.w > 0.999 && out.h > 0.999) return null; // the whole picture
+  return out;
+}
+
+async function readCrops(folder) {
+  try {
+    const j = JSON.parse(await fsp.readFile(path.join(folder, CROPS_FILE), 'utf8'));
+    const out = {};
+    for (const [k, v] of Object.entries(j.crops || {})) { const c = cleanCrop(v); if (c) out[k] = c; }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function setCrop(folder, name, crop) {
+  const all = await readCrops(folder);
+  const c = cleanCrop(crop);
+  if (c) all[name] = c; else delete all[name];
+  const file = path.join(folder, CROPS_FILE);
+  if (!Object.keys(all).length) await fsp.rm(file, { force: true });
+  else await writeJsonAtomic(file, { crops: Object.fromEntries(Object.entries(all).sort()) });
+  return c;
+}
+
 // Colour grades (public/grade.js): the originals stay untouched; the page shows them
 // graded and the release files (photos and video clips) are made graded.
 const Grade = require('./public/grade.js');
@@ -451,6 +488,9 @@ async function scanFolder(folder) {
   const favs = await readFavorites(folder);
   const rots = await readRotations(folder);
   const loved = await readLoved(folder);
+  const thumbTimes = await readThumbTimes(folder);
+  const grades = await readGrades(folder);
+  const crops = await readCrops(folder);
   const items = [];
   const tasks = entries
     .filter(e => e.isFile() && mediaType(e.name))
@@ -462,6 +502,8 @@ async function scanFolder(folder) {
         const item = { name: e.name, type, size: st.size, ...(await getMeta(full, type, st)) };
         item.rotate = rots[e.name] || 0;
         item.loved = loved.has(e.name);
+        if (grades[e.name]) item.grade = grades[e.name];
+        if (crops[e.name]) item.crop = crops[e.name];
         if (type === 'image') item.favorite = favs.has(e.name);
         else { item.scenes = await readScenes(full); if (thumbTimes[e.name] != null) item.thumbT = thumbTimes[e.name]; }
         items.push(item);
@@ -1223,11 +1265,14 @@ const TURN_FILTER = { 90: 'transpose=1,', 180: 'hflip,vflip,', 270: 'transpose=2
 // atempo works between 0.5 and 2, so 1/4 speed is two steps of 1/2.
 const ATEMPO = { 0.75: 'atempo=0.75', 0.5: 'atempo=0.5', 0.25: 'atempo=0.5,atempo=0.5' };
 
-function statusVideoArgs(src, start, end, out, limits, kbps, rotate = 0, speed = 1, audio = true) {
+function statusVideoArgs(src, start, end, out, limits, kbps, rotate = 0, speed = 1, audio = true, lut = null, crop = null) {
   const side = limits.maxVideoSide;
   const keep = `scale='min(iw,${side})':'min(ih,${side})':force_original_aspect_ratio=decrease:force_divisible_by=2`;
   const slow = speed < 1 ? `setpts=PTS/${speed},` : '';
-  let graph = `[0:v]${TURN_FILTER[rotate] || ''}${slow}${keep},setsar=1,format=yuv420p[v]`;
+  // lut: the colour grade as a .cube file name (see gradeLutFile), applied to the scaled picture.
+  // crop: fractions of the turned picture; even sizes, as H.264 needs them.
+  const cut = crop ? `crop=trunc(iw*${crop.w}/2)*2:trunc(ih*${crop.h}/2)*2:trunc(iw*${crop.x}):trunc(ih*${crop.y}),` : '';
+  let graph = `[0:v]${TURN_FILTER[rotate] || ''}${cut}${slow}${keep}${lut ? `,lut3d=file=${lut}` : ''},setsar=1,format=yuv420p[v]`;
   let audioMap = ['-map', '0:a:0?'];
   // Slowed down: the sound is stretched too (same pitch), so it stays in sync.
   if (speed < 1 && audio) {
@@ -1544,6 +1589,34 @@ const routes = {
     await setLoved(currentFolder, path.basename(file), !!body.value);
     return { ok: true };
   },
+  'POST /api/crop': async body => {
+    const file = fileInFolder(body.name);
+    return { crop: await setCrop(currentFolder, path.basename(file), body.crop) };
+  },
+  'POST /api/grade': async body => {
+    const file = fileInFolder(body.name);
+    return { grade: await setGrade(currentFolder, path.basename(file), body.grade) };
+  },
+  // "Auto": the AI model looks at the picture and proposes slider values.
+  'POST /api/grade-suggest': async body => {
+    const file = fileInFolder(String(body.name || ''));
+    const cfg = aiConfig();
+    if (!cfg) throw Object.assign(new Error('No AI key is saved yet'), { code: 400 });
+    const img = await analysisImage(file, Math.max(0, Number(body.t) || 0));
+    const text = await askVisionModel(cfg, img, GRADE_PROMPT);
+    const m = String(text || '').match(/\{[\s\S]*\}/);
+    let j;
+    try { j = JSON.parse(m ? m[0] : ''); } catch { throw new Error('The answer could not be read. Try again.'); }
+    const num = (v, a, b) => Math.max(a, Math.min(b, Math.round(Number(v) || 0)));
+    return { suggestion: { uw: num(j.uw, 0, 100), brightness: num(j.brightness, -50, 50), contrast: num(j.contrast, -50, 50),
+      saturation: num(j.saturation, -50, 50), warmth: num(j.warmth, -50, 50), tint: num(j.tint, -50, 50),
+      note: String(j.note || '').replace(/\s+/g, ' ').trim().slice(0, 160) } };
+  },
+  'POST /api/thumb-time': async body => {
+    const file = fileInFolder(body.name);
+    if (mediaType(body.name) !== 'video') throw Object.assign(new Error('Only videos have a thumbnail frame'), { code: 400 });
+    return { t: await setThumbTime(currentFolder, path.basename(file), body.t == null ? NaN : Number(body.t)) };
+  },
   'POST /api/rotate': async body => {
     const file = fileInFolder(body.name);
     return { rotate: await setRotation(currentFolder, path.basename(file), body.value) };
@@ -1802,11 +1875,14 @@ const routes = {
     const speed = cleanSpeed(body.speed);
     const seconds = (end - start) / speed; // length of the finished clip
     const audio = speed < 1 ? await hasAudio(src) : true;
+    const grade = (await readGrades(currentFolder))[path.basename(src)] || null;
+    const lut = grade ? await gradeLutFile(grade) : null;
+    const crop = (await readCrops(currentFolder))[path.basename(src)] || null;
     (async () => {
       try {
         // Already rendered earlier and within the limits: copy instead of rendering again
         // (not for turned videos: an older clip may not be turned the same way).
-        const reuse = body.reuseBase && !rotate && speed === 1 ? await findReusableVideo(String(body.reuseBase), seconds, limits) : null;
+        const reuse = body.reuseBase && !rotate && speed === 1 && !grade && !crop ? await findReusableVideo(String(body.reuseBase), seconds, limits) : null;
         if (reuse) {
           await fsp.copyFile(reuse, out);
           job.reused = path.relative(currentFolder, reuse);
@@ -1816,7 +1892,7 @@ const routes = {
         // with a lower bitrate.
         let kbps = videoBitrateK(seconds, limits);
         for (let attempt = 1; ; attempt++) {
-          await run(ffmpeg, statusVideoArgs(src, start, end, out, limits, kbps, rotate, speed, audio));
+          await run(ffmpeg, statusVideoArgs(src, start, end, out, limits, kbps, rotate, speed, audio, lut, crop), lut ? { cwd: PREVIEW_DIR } : {});
           const size = (await fsp.stat(out)).size;
           if (size <= limits.maxVideoMB * MB_BYTES) break;
           if (attempt >= 3) throw new Error(`still ${(size / MB_BYTES).toFixed(1)} MB after 3 tries (limit ${limits.maxVideoMB} MB)`);

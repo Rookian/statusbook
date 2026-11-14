@@ -135,6 +135,8 @@ function releaseChanges(item, e = entryFor(item.postKey || item.key)) {
     picture = item.format !== 'original';  // an old file with a blurred background
   }
   if (e.kind === 'media' && (item.rotate || 0) !== rotOf(e.source)) picture = true; // turned since
+  if (e.kind === 'media' && (item.grade || '') !== Grade.gradeId(gradeOf(e.source))) picture = true; // colours changed
+  if (e.kind === 'media' && (item.crop || '') !== cropKey((itemOf(e.source) || {}).crop)) picture = true; // cropped since
   if (e.type === 'video' && (item.speed || 1) !== (e.speed || 1)) picture = true;    // speed changed
   if (picture) out.push('picture');
   return out.length ? out : null;
@@ -342,11 +344,18 @@ function drawBackground(ctx, post, media, scale) {
   if (!mw || !mh) return;
   // media.rot: the file's turn (R in Pick), set when it was loaded.
   const rot = media.rot || 0, side = rot % 180 !== 0;
-  const f = side ? Math.min(SW / mh, SH / mw) : Math.min(SW / mw, SH / mh);
+  // The file's crop (K in Pick), as a part of the unturned picture.
+  const it = media.srcName ? itemOf(media.srcName) : null;
+  const oc = it && it.crop ? cropInOriginal(it.crop, rot) : { x: 0, y: 0, w: 1, h: 1 };
+  const sw = oc.w * mw, sh = oc.h * mh;
+  const f = side ? Math.min(SW / sh, SH / sw) : Math.min(SW / sw, SH / sh);
   ctx.save();
   ctx.translate(SW / 2, SH / 2);
   ctx.rotate((rot * Math.PI) / 180);
-  ctx.drawImage(media, -mw * f / 2, -mh * f / 2, mw * f, mh * f);
+  // The file's colour grade (G in Pick), looked up fresh so a change shows at once.
+  const grade = media.srcName ? gradeOf(media.srcName) : null;
+  if (grade) ctx.filter = gradeCss(grade);
+  ctx.drawImage(media, oc.x * mw, oc.y * mh, sw, sh, -sw * f / 2, -sh * f / 2, sw * f, sh * f);
   ctx.restore();
 }
 
@@ -575,7 +584,7 @@ function renderPost(canvas, post, media, scale = 1, textOnly = false) {
 function loadImageEl(name) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => { img.rot = rotOf(name); resolve(img); };
+    img.onload = () => { img.rot = rotOf(name); img.srcName = name; resolve(img); };
     img.onerror = () => reject(new Error(`Could not load ${name}`));
     img.src = mediaUrl({ name });
   });
@@ -865,7 +874,7 @@ function renderCard(e, num, row = null) {
     frame.append(c);
   } else {
     const src = thumbUrl(e);
-    frame.append(el('img', { class: 'fg' + rotClass(rotOf(e.source)), src, loading: 'lazy', alt: '' }));
+    frame.append(el('img', { class: 'fg' + rotClass(rotOf(e.source)), src, loading: 'lazy', alt: '', style: row ? null : mediaStyle(itemOf(e.source)) }));
   }
   const piece = row && row.item.piece;
   if (e.type === 'video') {
@@ -1989,9 +1998,24 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
     const ext = e.source.split('.').pop().toLowerCase();
     const big = Math.max(img.naturalWidth, img.naturalHeight);
     const rot = rotOf(e.source);
-    if (rot) {
-      // Turned in Pick: drawn turned (and scaled down if needed) as a new JPEG.
-      const c = turnedCanvas(img, rot, Math.min(1, L.maxImageSide / big));
+    const grade = gradeOf(e.source);
+    const crop = (itemOf(e.source) || {}).crop || null;
+    if (rot || grade || crop) {
+      // Turned, cropped or colour-graded in Pick: drawn that way (and scaled down if needed) as a new JPEG.
+      let c = turnedCanvas(img, rot, Math.min(1, L.maxImageSide / big));
+      if (crop) {
+        const cut = document.createElement('canvas');
+        cut.width = Math.max(1, Math.round(c.width * crop.w));
+        cut.height = Math.max(1, Math.round(c.height * crop.h));
+        cut.getContext('2d').drawImage(c, Math.round(c.width * crop.x), Math.round(c.height * crop.y), cut.width, cut.height, 0, 0, cut.width, cut.height);
+        c = cut;
+      }
+      if (grade) {
+        const ctx = c.getContext('2d');
+        const px = ctx.getImageData(0, 0, c.width, c.height);
+        Grade.gradePixels(px.data, grade);
+        ctx.putImageData(px, 0, 0);
+      }
       file += '.jpg';
       await apiRetry('/api/posts/image', { ...where, file, data: c.toDataURL('image/jpeg', 0.92) });
     } else if ((ext === 'jpg' || ext === 'jpeg') && big <= L.maxImageSide) {
@@ -2039,6 +2063,8 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
     } : undefined,
     format: e.type === 'text' ? undefined : 'original',
     rotate: e.kind === 'media' && rotOf(e.source) ? rotOf(e.source) : undefined,
+    grade: e.kind === 'media' && gradeOf(e.source) ? Grade.gradeId(gradeOf(e.source)) : undefined,
+    crop: e.kind === 'media' && (itemOf(e.source) || {}).crop ? cropKey(itemOf(e.source).crop) : undefined,
     taken: e.kind === 'media' ? addSeconds(e.time, it.start - e.start) || undefined : undefined,
     location: g ? {
       lat: g.lat, lon: g.lon, approxFrom: g.from || undefined,

@@ -96,12 +96,31 @@
           <button id="jumpLastBtn" class="focus-only jump" title="Jump to the last file you picked for this release (L)">✓ Last picked</button>
           <button id="rotLeft" title="Turn 90° to the left (Shift+R)">⟲</button>
           <button id="rotRight" title="Turn 90° to the right (R)">⟳</button>
+          <button id="cropBtn" title="Crop (K)">✂ Crop</button>
           <button id="gradeBtn" title="Colours: underwater correction, brightness, contrast … (G)">🎨</button>
           <button id="identifyBtn" title="Identify the animals in this photo or in the video frame shown (A)">🐠</button>
           <button id="loveBtn" title="Favorite (F): keep it among your favorites, picked or not">♡</button>
           <button id="pickBtn" title="Pick this photo for the release (P)">☆ Pick</button>
           <button id="focusBtn" title="Full screen (Enter) · Esc to leave">⛶</button>
         </div>
+      </div>
+      <!-- Cropping (K): a frame over the picture; this bar chooses its shape. -->
+      <div id="cropBar" hidden>
+        <span class="clabel">Shape</span>
+        <span id="cropAspects" class="seg">
+          <button data-a="free" class="on" title="Any shape">Free</button>
+          <button data-a="orig" title="The picture's own shape">Original</button>
+          <button data-a="0.5625" title="Fills the phone screen in WhatsApp Status">9:16 Status</button>
+          <button data-a="0.8">4:5</button>
+          <button data-a="1">1:1</button>
+          <button data-a="1.7778">16:9</button>
+        </span>
+        <button id="cropTurn" title="Swap the shape: portrait ↔ landscape">⇄</button>
+        <span id="cropSize" class="muted"></span>
+        <span class="grow"></span>
+        <button id="cropReset" title="Whole picture again">Reset</button>
+        <button id="cropCancel" title="Leave without changing (Esc)">Cancel</button>
+        <button id="cropApply" class="primary" title="Keep this crop (Enter)">✓ Apply</button>
       </div>
       <!-- Colours of the selected file (G): shown graded everywhere, release files are made graded. -->
       <div id="gradePanel" hidden>

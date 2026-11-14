@@ -48,6 +48,29 @@ function gradeCss(g) {
 }
 const gradeStyle = g => (g ? `filter:${gradeCss(g)}` : null);
 
+// Crops (K): kept as fractions of the picture as shown, i.e. after turning. Shown with
+// CSS object-view-box, which works on the unturned picture, so the box is turned back.
+const itemOf = name => state.items.find(x => x.name === name) || null;
+function cropInOriginal(c, rot) {
+  if (rot === 90) return { x: c.y, y: 1 - c.x - c.w, w: c.h, h: c.w };
+  if (rot === 180) return { x: 1 - c.x - c.w, y: 1 - c.y - c.h, w: c.w, h: c.h };
+  if (rot === 270) return { x: 1 - c.y - c.h, y: c.x, w: c.h, h: c.w };
+  return c;
+}
+function cropBox(it) {
+  if (!it || !it.crop) return '';
+  const o = cropInOriginal(it.crop, it.rotate || 0);
+  const p = v => `${(Math.max(0, v) * 100).toFixed(3)}%`;
+  return `inset(${p(o.y)} ${p(1 - o.x - o.w)} ${p(1 - o.y - o.h)} ${p(o.x)})`;
+}
+// The style of a picture of a file: its colours and its crop.
+function mediaStyle(it) {
+  if (!it) return null;
+  const parts = [gradeStyle(it.grade), it.crop ? `object-view-box:${cropBox(it)}` : null].filter(Boolean);
+  return parts.length ? parts.join(';') : null;
+}
+const cropKey = c => (c ? [c.x, c.y, c.w, c.h].join(',') : '');
+
 // Turned files (R / Shift+R): the original stays as it is, pictures and videos are shown
 // turned (CSS, see .rot in style.css) and the release files are made turned.
 const rotOf = name => { const it = state.items.find(x => x.name === name); return (it && it.rotate) || 0; };
@@ -284,7 +307,7 @@ function renderTile(it, i, released = releasedFiles()) {
     onclick: () => select(i),
   },
   el('div', { class: 'tthumb' },
-    el('img', { src: thumbSrc(it), loading: 'lazy', decoding: 'async', alt: '', class: rotClass(it.rotate).trim() || null }),
+    el('img', { src: thumbSrc(it), loading: 'lazy', decoding: 'async', alt: '', class: rotClass(it.rotate).trim() || null, style: mediaStyle(it) }),
     it.type === 'video' ? el('span', { class: 'tvid' }, ic('play'), it.duration ? fmtTime(it.duration).replace(/\.\d$/, '') : '') : null,
     badge,
     st.state === 'picked' ? el('span', { class: 'ttick' }, ic('check')) : null,
@@ -411,6 +434,8 @@ function renderViewer() {
   const it = current();
   stage.replaceChildren();
   $('#videoPanel').hidden = true;
+  if (state.cropping) endCrop(false);
+  resetZoom(); // a new file starts as the whole picture
   renderStageTools();
   renderGradePanel();
   renderAnimals();
@@ -426,13 +451,15 @@ function renderViewer() {
   const rot = it.rotate || 0;
   if (it.type === 'image') {
     stage.append(el('img', {
-      src: mediaUrl(it), alt: it.name, class: rotClass(rot).trim() || null,
+      src: mediaUrl(it), alt: it.name, class: rotClass(rot).trim() || null, style: mediaStyle(it),
       title: state.focus ? 'Double-click: leave full screen' : 'Double-click: full screen',
       ondblclick: () => toggleFocus(),
     }));
     if (it.favorite) stage.append(el('div', { class: 'bigstar' }, '★'));
   } else {
     const v = turnableVideo(mediaUrl(it), rot);
+    v.style.filter = gradeCss(it.grade);
+    if (it.crop) v.style.setProperty('object-view-box', cropBox(it));
     v.preload = 'metadata';
     // Double-click: full screen of the whole Pick view (with timeline and scenes),
     // instead of the browser's full screen of the bare video.
@@ -472,6 +499,8 @@ function offerPreview(it) {
     onclick: () => {
       stage.replaceChildren(el('div', { class: 'msg' }, 'Creating a preview… this can take a while for long videos.'));
       const v = turnableVideo('/preview?name=' + encodeURIComponent(it.name), it.rotate || 0);
+      v.style.filter = gradeCss(it.grade);
+      if (it.crop) v.style.setProperty('object-view-box', cropBox(it));
       v.preload = 'metadata';
       v.addEventListener('dblclick', e => { e.preventDefault(); toggleFocus(); });
       applyPlayback(v);
@@ -724,6 +753,245 @@ function makeZoom(stage, opts) {
 
 let pickZoom = null, viewerZoom = null;
 const resetZoom = () => { if (pickZoom) pickZoom.reset(); };
+
+function initZoom() {
+  pickZoom = makeZoom($('#stage'), {
+    node: () => $('#stage img, #stage video'), info: $('#zoomInfo'),
+    active: () => !!current() && !state.cropping, onSwipe: dir => select(step(state.sel, dir)),
+  });
+  // The viewer zooms while the picture is fitted to the window (not at "real size",
+  // where it scrolls instead).
+  viewerZoom = makeZoom($('#viewerStage'), {
+    node: () => $('#viewerStage > *'), info: $('#viewerZoomInfo'),
+    active: () => $('#viewer-dlg').open && $('#viewerStage').classList.contains('fit'),
+  });
+}
+
+// ---------- cropping (K) ----------
+// A frame over the picture: drag its corners or edges, drag inside to move it, drag
+// outside it to draw a new one. The bar below sets the shape (free, 9:16 for the
+// Status screen …). The whole picture is shown while cropping; Apply keeps the crop.
+
+const CROP_MIN = 24; // px
+
+function initCrop() {
+  $('#cropBtn').addEventListener('click', () => (state.cropping ? endCrop(true) : startCrop()));
+  $('#cropApply').addEventListener('click', () => endCrop(true));
+  $('#cropCancel').addEventListener('click', () => endCrop(false));
+  $('#cropReset').addEventListener('click', () => { state.cropping.f = { x: 0, y: 0, w: 1, h: 1 }; setCropAspect(state.cropping.aspect); });
+  $('#cropTurn').addEventListener('click', () => {
+    const c = state.cropping;
+    if (!c || c.aspect === 'free') return;
+    setCropAspect(1 / cropAspectValue(c.aspect), true);
+  });
+  for (const b of document.querySelectorAll('#cropAspects button')) {
+    b.addEventListener('click', () => setCropAspect(b.dataset.a));
+    b.addEventListener('pointerup', () => setTimeout(() => b.blur(), 0));
+  }
+  window.addEventListener('resize', () => { if (state.cropping) renderCrop(); });
+}
+
+// Where the whole picture is on the stage (px, relative to the stage) and its pixels.
+function cropMediaRect() {
+  const it = current(), node = $('#stage img, #stage video'), stage = $('#stage');
+  if (!it || !node) return null;
+  const nw = node.naturalWidth || node.videoWidth, nh = node.naturalHeight || node.videoHeight;
+  if (!nw || !nh) return null;
+  const rot = it.rotate || 0, side = rot % 180 !== 0;
+  const pw = side ? nh : nw, ph = side ? nw : nh; // pixels as shown
+  const sr = stage.getBoundingClientRect();
+  let x, y, w, h;
+  if (rot) {
+    // Turned pictures fill the stage (contain), centred.
+    const f = Math.min(sr.width / pw, sr.height / ph);
+    w = pw * f; h = ph * f; x = (sr.width - w) / 2; y = (sr.height - h) / 2;
+  } else {
+    const r = node.getBoundingClientRect();
+    x = r.left - sr.left; y = r.top - sr.top; w = r.width; h = r.height;
+  }
+  return { x, y, w, h, pw, ph };
+}
+
+function startCrop() {
+  const it = current();
+  if (!it) return;
+  const v = video();
+  if (v) v.pause();
+  resetZoom();
+  const node = $('#stage img, #stage video');
+  if (node) node.style.removeProperty('object-view-box'); // show the whole picture
+  requestAnimationFrame(() => {
+    const m = cropMediaRect();
+    if (!m) { if (node) node.style.setProperty('object-view-box', cropBox(it)); toast('The picture is not loaded yet'); return; }
+    state.cropping = { it, f: it.crop ? { ...it.crop } : { x: 0, y: 0, w: 1, h: 1 }, aspect: 'free' };
+    document.body.classList.add('cropping');
+    $('#cropBar').hidden = false;
+    $('#cropBtn').classList.add('on');
+    buildCropLayer();
+    renderCrop();
+  });
+}
+
+function endCrop(keep) {
+  const c = state.cropping;
+  if (!c) return;
+  state.cropping = null;
+  document.body.classList.remove('cropping');
+  $('#cropBar').hidden = true;
+  const layer = $('#cropLayer');
+  if (layer) layer.remove();
+  const it = c.it;
+  if (keep) {
+    const f = c.f;
+    const whole = f.x < 0.001 && f.y < 0.001 && f.w > 0.999 && f.h > 0.999;
+    const before = it.crop || null;
+    it.crop = whole ? null : { x: +f.x.toFixed(4), y: +f.y.toFixed(4), w: +f.w.toFixed(4), h: +f.h.toFixed(4) };
+    if (!it.crop) delete it.crop;
+    if (cropKey(before) !== cropKey(it.crop)) {
+      api('/api/crop', { name: it.name, crop: it.crop || null })
+        .then(r => { if (r.crop) it.crop = r.crop; else delete it.crop; })
+        .catch(err => toast('Could not save the crop: ' + err.message));
+      toast(it.crop ? 'Cropped' : 'Crop removed: the whole picture again');
+      if (typeof onRotated === 'function') onRotated(it); // Compose follows
+    }
+  }
+  if (current() === it) {
+    const node = $('#stage img, #stage video');
+    if (node) { if (it.crop) node.style.setProperty('object-view-box', cropBox(it)); else node.style.removeProperty('object-view-box'); }
+    refreshRow(state.sel);
+    if (state.focus) renderFilmstrip();
+  }
+  $('#cropBtn').classList.toggle('on', !!(current() && current().crop));
+}
+
+const cropAspectValue = (a, m = cropMediaRect()) => (a === 'free' ? null : a === 'orig' ? m.pw / m.ph : Number(a));
+
+// A shape: the largest frame of it that fits the picture, around the current frame's centre.
+function setCropAspect(a, keepButton) {
+  const c = state.cropping;
+  if (!c) return;
+  const m = cropMediaRect();
+  if (!keepButton) {
+    c.aspect = a;
+    for (const b of document.querySelectorAll('#cropAspects button')) b.classList.toggle('on', b.dataset.a === String(a));
+  } else {
+    c.aspect = String(a);
+  }
+  const A = cropAspectValue(c.aspect, m);
+  if (A) {
+    const W = m.pw, H = m.ph; // work in picture pixels so the shape is exact
+    const cx = (c.f.x + c.f.w / 2) * W, cy = (c.f.y + c.f.h / 2) * H;
+    let w = W, h = w / A;
+    if (h > H) { h = H; w = h * A; }
+    const x = Math.max(0, Math.min(W - w, cx - w / 2)), y = Math.max(0, Math.min(H - h, cy - h / 2));
+    c.f = { x: x / W, y: y / H, w: w / W, h: h / H };
+  }
+  renderCrop();
+}
+
+function buildCropLayer() {
+  const old = $('#cropLayer');
+  if (old) old.remove();
+  const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map(d => el('div', { class: `ch ${d}`, 'data-h': d }));
+  const rect = el('div', { class: 'crect' },
+    el('div', { class: 'cgrid v1' }), el('div', { class: 'cgrid v2' }), el('div', { class: 'cgrid h1' }), el('div', { class: 'cgrid h2' }),
+    el('span', { class: 'ctag' }), ...handles);
+  // The dark mask is clipped to the picture; the frame and its handles are not, so a
+  // handle on the picture's edge can still be grabbed.
+  const frame = el('div', { class: 'cframe' }, el('div', { class: 'cmask' }, el('div', { class: 'chole' })), rect);
+  const layer = el('div', { id: 'cropLayer' }, frame);
+  $('#stage').append(layer);
+  frame.addEventListener('pointerdown', cropPointerDown);
+  layer.addEventListener('dblclick', () => endCrop(true));
+}
+
+function renderCrop() {
+  const c = state.cropping, m = cropMediaRect();
+  if (!c || !m) return;
+  const frame = $('#cropLayer .cframe'), rect = $('#cropLayer .crect');
+  Object.assign(frame.style, { left: `${m.x}px`, top: `${m.y}px`, width: `${m.w}px`, height: `${m.h}px` });
+  const box = { left: `${c.f.x * m.w}px`, top: `${c.f.y * m.h}px`, width: `${c.f.w * m.w}px`, height: `${c.f.h * m.h}px` };
+  Object.assign(rect.style, box);
+  Object.assign($('#cropLayer .chole').style, box);
+  const px = `${Math.round(c.f.w * m.pw)} × ${Math.round(c.f.h * m.ph)}`;
+  $('#cropLayer .ctag').textContent = px;
+  $('#cropSize').textContent = `${px} px`;
+}
+
+function cropPointerDown(e) {
+  const c = state.cropping, m = cropMediaRect();
+  if (!c || !m) return;
+  e.preventDefault();
+  const frame = e.currentTarget;
+  frame.setPointerCapture(e.pointerId);
+  const fr = frame.getBoundingClientRect();
+  const W = m.w, H = m.h;
+  const p0 = { x: e.clientX - fr.left, y: e.clientY - fr.top };
+  const s = { L: c.f.x * W, T: c.f.y * H, R: (c.f.x + c.f.w) * W, B: (c.f.y + c.f.h) * H };
+  let mode = e.target.dataset.h || null;
+  if (!mode) mode = p0.x >= s.L && p0.x <= s.R && p0.y >= s.T && p0.y <= s.B ? 'move' : 'new';
+  const A0 = cropAspectValue(c.aspect, m);
+  const A = A0 ? A0 * (m.ph / m.pw) * (W / H) : null; // the shape in screen pixels
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  if (mode === 'new') {
+    const ax = clamp(p0.x, 0, W), ay = clamp(p0.y, 0, H);
+    Object.assign(s, { L: ax, R: ax, T: ay, B: ay });
+  }
+  frame.classList.add('dragging');
+
+  const move = ev => {
+    const dx = ev.clientX - fr.left - p0.x, dy = ev.clientY - fr.top - p0.y;
+    let { L, T, R, B } = s;
+    let h = mode;
+    if (mode === 'move') {
+      const w = R - L, hh = B - T;
+      L = clamp(s.L + dx, 0, W - w); T = clamp(s.T + dy, 0, H - hh); R = L + w; B = T + hh;
+    } else {
+      if (mode === 'new') h = (dy < 0 ? 'n' : 's') + (dx < 0 ? 'w' : 'e');
+      const min = mode === 'new' ? 1 : CROP_MIN;
+      if (h.includes('w')) L = clamp(s.L + dx, 0, R - min);
+      if (h.includes('e')) R = clamp(s.R + dx, L + min, W);
+      if (h.includes('n')) T = clamp(s.T + dy, 0, B - min);
+      if (h.includes('s')) B = clamp(s.B + dy, T + min, H);
+      if (A) {
+        if (h.length === 2) {
+          // A corner: the opposite corner stays, the shape is kept.
+          let w = R - L, hh = B - T;
+          if (w / hh > A) w = hh * A; else hh = w / A;
+          const maxW = h.includes('w') ? s.R : W - s.L, maxH = h.includes('n') ? s.B : H - s.T;
+          w = Math.min(w, maxW, maxH * A); hh = w / A;
+          if (h.includes('w')) { R = s.R; L = R - w; } else { L = s.L; R = L + w; }
+          if (h.includes('n')) { B = s.B; T = B - hh; } else { T = s.T; B = T + hh; }
+        } else if (h === 'n' || h === 's') {
+          // An edge: the frame grows around its middle.
+          let hh = B - T, w = hh * A;
+          const cx = (s.L + s.R) / 2, maxW = 2 * Math.min(cx, W - cx);
+          if (w > maxW) { w = maxW; hh = w / A; if (h === 'n') T = B - hh; else B = T + hh; }
+          L = cx - w / 2; R = cx + w / 2;
+        } else {
+          let w = R - L, hh = w / A;
+          const cy = (s.T + s.B) / 2, maxH = 2 * Math.min(cy, H - cy);
+          if (hh > maxH) { hh = maxH; w = hh * A; if (h === 'w') L = R - w; else R = L + w; }
+          T = cy - hh / 2; B = cy + hh / 2;
+        }
+      }
+    }
+    c.f = { x: L / W, y: T / H, w: (R - L) / W, h: (B - T) / H };
+    renderCrop();
+  };
+  const before = { ...c.f };
+  const up = () => {
+    frame.removeEventListener('pointermove', move);
+    frame.removeEventListener('pointerup', up);
+    frame.removeEventListener('pointercancel', up);
+    frame.classList.remove('dragging');
+    // A click (or a tiny drag) outside the frame: keep the frame as it was.
+    if (c.f.w * W < CROP_MIN || c.f.h * H < CROP_MIN) { c.f = before; renderCrop(); }
+  };
+  frame.addEventListener('pointermove', move);
+  frame.addEventListener('pointerup', up);
+  frame.addEventListener('pointercancel', up);
+}
 
 // ---------- colours (G) ----------
 // Sliders for the selected file. The picture, its tile and the strip follow at once;
@@ -1073,7 +1341,13 @@ function renderStageTools() {
 
 async function rotateCurrent(dir) {
   const it = current();
-  if (!it) return;
+  if (!it || state.cropping) return;
+  // The crop turns with the picture.
+  if (it.crop) {
+    const c = it.crop;
+    it.crop = dir > 0 ? { x: 1 - c.y - c.h, y: c.x, w: c.h, h: c.w } : { x: c.y, y: 1 - c.x - c.w, w: c.h, h: c.w };
+    api('/api/crop', { name: it.name, crop: it.crop }).catch(err => toast('Could not save the crop: ' + err.message));
+  }
   const before = it.rotate || 0;
   const v = video();
   const at = v ? v.currentTime : 0, playing = v && !v.paused;
@@ -1159,25 +1433,59 @@ const DAY_COLORS = ['#19a8a4', '#d98a2b', '#5b8def', '#2f9f7a', '#c75c8a', '#8a6
 function renderFilmstrip() {
   const strip = $('#filmstrip');
   if (!state.focus) return;
-  const visible = [];
-  for (let i = 0; i < state.view.length; i++) if (!isHidden(state.view[i])) visible.push(i);
-  const at = Math.max(0, visible.indexOf(state.sel));
-  const from = Math.max(0, at - 14), to = Math.min(visible.length, at + 15);
   const released = releasedFiles();
-  strip.replaceChildren(...visible.slice(from, to).map(i => {
+  const visible = [];
+  const start = state.lovedOnly ? null : newReleaseStart(released);
+  let sig = start && start.after ? `start:${start.day}:${newReleaseLabel()}|` : '';
+  for (let i = 0; i < state.view.length; i++) {
     const it = state.view[i];
-    const st = fileStatus(it, released);
-    return el('div', {
-      class: `fthumb ${st.state}` + (i === state.sel ? ' sel' : ''), title: it.name,
-      onclick: () => select(i),
-    },
-    el('img', { src: thumbSrc(it), loading: 'lazy', decoding: 'async', alt: '', class: rotClass(it.rotate).trim() || null }),
-    it.type === 'video' ? el('span', { class: 'fvid' }, '▶') : null,
-    st.state === 'picked' ? el('span', { class: 'ftick' }, '✓') : null,
-    it.loved ? el('span', { class: 'fheart' }, '♥') : null);
-  }));
-  const sel = strip.querySelector('.sel');
-  if (sel) sel.scrollIntoView({ block: 'nearest', inline: 'center' });
+    if (isHidden(it)) continue;
+    const st = fileStatus(it, released).state;
+    visible.push({ i, it, st });
+    sig += `${it.name}:${st}${it.loved ? 'h' : ''}${it.rotate || 0}${it.thumbT != null ? '@' + it.thumbT : ''}${Grade.gradeId(it.grade)}${cropKey(it.crop)}|`;
+  }
+  let opened = false;
+  if (strip.dataset.sig !== sig || !strip.firstChild) {
+    const keepScroll = strip.dataset.sig ? strip.scrollLeft : null;
+    strip.dataset.sig = sig;
+    strip.replaceChildren();
+    let day = null, row = null, n = -1;
+    for (const { i, it, st } of visible) {
+      const key = groupKey(it);
+      if (key !== day) {
+        day = key;
+        n++;
+        const count = visible.filter(x => groupKey(x.it) === key).length;
+        const label = key === 'unknown' ? 'Unknown date'
+          : parseStamp(key).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+        row = el('div', { class: 'frow' });
+        if (start && start.after && key === start.day) {
+          strip.append(el('div', { class: 'fstart', title: 'Everything to the left is in a release already' }, el('b', {}, draftTitle()), el('span', {}, 'starts here'), el('i', {}, '▶')));
+        }
+        strip.append(el('div', { class: 'fday', style: `--day:${DAY_COLORS[n % DAY_COLORS.length]}`, title: groupLabel(key) },
+          el('div', { class: 'fdaybar' }, el('span', {}, el('b', {}, label), ` · ${count} file${count === 1 ? '' : 's'}`)),
+          row));
+      }
+      row.append(el('div', { class: `fthumb ${st}`, 'data-i': i, title: it.name, onclick: () => select(i) },
+        el('img', { src: thumbSrc(it), loading: 'lazy', decoding: 'async', alt: '', class: rotClass(it.rotate).trim() || null, style: mediaStyle(it) }),
+        it.type === 'video' ? el('span', { class: 'fvid' }, '▶') : null,
+        st === 'picked' ? el('span', { class: 'ftick' }, '✓') : null,
+        it.loved ? el('span', { class: 'fheart' }, '♥') : null,
+        it.grade ? el('span', { class: 'fgrade', title: 'Colours changed' }, '🎨') : null));
+    }
+    if (keepScroll != null) strip.scrollLeft = keepScroll; else opened = true;
+  }
+  const old = strip.querySelector('.fthumb.sel');
+  const sel = strip.querySelector(`.fthumb[data-i="${state.sel}"]`);
+  if (old && old !== sel) old.classList.remove('sel');
+  if (sel) {
+    sel.classList.add('sel');
+    // Keep the selected picture in view: centred when the strip opens, else only as far as needed.
+    const s = strip.getBoundingClientRect(), r = sel.getBoundingClientRect();
+    if (opened) strip.scrollLeft += r.left - s.left - (s.width - r.width) / 2;
+    else if (r.left < s.left + 70) strip.scrollLeft += r.left - s.left - 70;
+    else if (r.right > s.right - 70) strip.scrollLeft += r.right - s.right + 70;
+  }
 }
 
 
@@ -1204,7 +1512,7 @@ function updateTimeline() {
   $('#tlHead').style.left = pct(v.currentTime);
   const p = $('#tlPending');
   if (state.pendingStart != null && v.currentTime > state.pendingStart) {
-    p.style.display = 'block';
+    p.style.display = 'flex';
     p.style.left = pct(state.pendingStart);
     p.style.width = `calc(${pct(v.currentTime)} - ${pct(state.pendingStart)})`;
     // The scene being marked shows its length so far (at the speed new scenes get).
@@ -1595,6 +1903,15 @@ function onKey(e) {
   const tag = e.target.tagName;
   if (tag === 'SELECT' || (tag === 'INPUT' && e.target.type !== 'checkbox')) return;
   if (e.ctrlKey || e.altKey || e.metaKey) return;
+  // While cropping: Enter keeps it, Esc leaves; other keys wait.
+  if (state.cropping) {
+    if (e.key === 'Enter' || e.key === 'k' || e.key === 'K') endCrop(true);
+    else if (e.key === 'Escape') endCrop(false);
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   const v = video();
   const secs = e.shiftKey ? 10 : 2;
   // , and . by their place on the keyboard (Shift gives other characters on German keyboards).
@@ -1618,6 +1935,13 @@ function onKey(e) {
     case ' ': togglePlay(); break;
     case 's': case 'S': if (v) stepSpeed(e.shiftKey ? -1 : 1); break;
     case 'm': case 'M': toggleMute(); break;
+    case 'a': case 'A': identifyCurrent(); break;
+    case 'g': case 'G': toggleGradePanel(); break;
+    case 'k': case 'K': startCrop(); break;
+    case '0': resetZoom(); break;
+    case 't': case 'T': setThumbFrame(e.shiftKey); break;
+    case 'b': case 'B': if (state.mode === 'pick') jumpToNewDays(); break;
+    case 'l': case 'L': if (state.mode === 'pick') jumpToLastPicked(); break;
     case 'f': case 'F': toggleLoved(); break;
     case 'p': case 'P': toggleFavorite(); break; // pick for the release
     case 'i': case 'I': markIn(); break;
@@ -1653,6 +1977,28 @@ function init() {
   $('#muteBtn').addEventListener('click', toggleMute);
   for (const b of document.querySelectorAll('#speedSeg button')) b.addEventListener('click', () => setSpeed(Number(b.dataset.speed)));
   $('#loveBtn').addEventListener('click', toggleLoved);
+  // The mouse wheel scrolls the strip sideways.
+  $('#filmstrip').addEventListener('wheel', e => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    e.currentTarget.scrollLeft += e.deltaY * 2;
+  }, { passive: false });
+  $('#identifyBtn').addEventListener('click', identifyCurrent);
+  initGradePanel();
+  initCrop();
+  initZoom();
+  // Double-click a tile: the same full screen as double-clicking the large picture.
+  // (The second click of a double-click, counted on the list: the first click redraws
+  // the tile, so the browser's own dblclick event never arrives.)
+  $('#list').addEventListener('click', e => {
+    const tile = e.detail === 2 ? e.target.closest('.tile') : null;
+    if (!tile) return;
+    const i = Number(tile.dataset.i);
+    if (i !== state.sel) select(i);
+    toggleFocus(true);
+  });
+  $('#jumpStartBtn').addEventListener('click', jumpToNewDays);
+  $('#jumpLastBtn').addEventListener('click', jumpToLastPicked);
   $('#showAll').addEventListener('click', () => setLovedOnly(false));
   $('#showLoved').addEventListener('click', () => setLovedOnly(true));
   // Buttons hand the keyboard back to the page.
@@ -1665,7 +2011,7 @@ function init() {
   $('#navPrev').addEventListener('click', () => select(step(state.sel, -1)));
   $('#navNext').addEventListener('click', () => select(step(state.sel, 1)));
   // Buttons hand the keyboard back to the page, so I / O / Space work right after a click.
-  for (const id of ['rotLeft', 'rotRight', 'loveBtn', 'pickBtn', 'focusBtn', 'navPrev', 'navNext']) {
+  for (const id of ['cropBtn', 'cropTurn', 'cropReset', 'cropCancel', 'cropApply', 'gradeBtn', 'gradeUw', 'gradeAuto', 'gradeCopy', 'gradePaste', 'gradeReset', 'jumpStartBtn', 'jumpLastBtn', 'rotLeft', 'rotRight', 'identifyBtn', 'loveBtn', 'pickBtn', 'focusBtn', 'navPrev', 'navNext']) {
     const b = $('#' + id);
     b.addEventListener('pointerup', () => setTimeout(() => b.blur(), 0));
   }
