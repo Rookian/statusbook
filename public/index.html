@@ -279,6 +279,34 @@
   </dialog>
 
   <!-- Spelling check before a part is published (posts.js). -->
+  <!-- The sent video scenes in original quality, cut without re-encoding (posts.js). -->
+  <dialog id="origDlg">
+    <h2>Export sent scenes</h2>
+    <div id="origSetup">
+      <p id="origInfo"></p>
+      <div class="origdest">
+        <input type="text" id="origDest" placeholder="Folder for the scenes, e.g. your Google Drive folder" spellcheck="false">
+        <button id="origPick">Browse …</button>
+      </div>
+      <p class="muted">Picture and sound stay exactly as recorded (no re-encoding). A file may start a moment
+        before its scene. Scenes that are in the folder already are skipped.</p>
+      <div class="btns">
+        <button id="origCancel">Cancel</button>
+        <button id="origGo" class="primary">Export</button>
+      </div>
+    </div>
+    <div id="origProgress" hidden>
+      <progress id="origBar" value="0" max="1"></progress>
+      <p id="origStatus"></p>
+      <ul id="origErrors"></ul>
+      <div class="btns">
+        <button id="origReveal">Open folder</button>
+        <button id="origStop">■ Stop</button>
+        <button id="origClose" class="primary">Close</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="spellDlg">
     <h2>Spelling check</h2>
     <p id="spellCount"></p>

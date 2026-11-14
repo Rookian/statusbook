@@ -67,6 +67,7 @@ Inside a journey you put together **releases**, the batches you post to your Sta
 - Built-in publishing through WhatsApp Web (Chrome, signed in once with the QR code)
 - Changes after a release was made are detected and updated before publishing
 - Single files or whole releases can be marked as sent or not sent by hand
+- **Export sent scenes:** every video scene that went out, cut from its original without re-encoding, into a folder of your choice (for example your Google Drive folder); a later run only adds what is new
 - Releases made in several parts by older versions stay readable and can still be published part by part
 
 **Comfort**

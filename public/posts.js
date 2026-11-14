@@ -620,6 +620,11 @@ function renderGallery({ reveal = true } = {}) {
     return;
   }
   g.append(draftCard());
+  if (posts.releases.some(r => r.parts.some(p => p.items.some(i => i.type === 'video' && i.sentAt)))) {
+    g.append(el('div', { class: 'gnote export-line' },
+      el('span', { class: 'grow' }, 'The video scenes you sent, in original quality, e.g. for your Google Drive.'),
+      el('button', { onclick: openOriginalsExport, title: 'Cut the sent scenes from the originals, without quality loss, into a folder' }, ic('folder'), 'Export sent scenes …')));
+  }
   for (const r of [...posts.releases].reverse()) {
     // A release in several parts: one line with its whole date range above them.
     if (r.parts.length > 1) {
@@ -2364,6 +2369,63 @@ function watchPublish() {
   }, 2000);
 }
 
+// ---------- sent scenes in original quality (server: startOriginalsExport) ----------
+
+let origPoll = null;
+
+function renderOriginalsJob(job) {
+  $('#origSetup').hidden = true;
+  $('#origProgress').hidden = false;
+  const bar = $('#origBar');
+  bar.max = Math.max(1, job.total);
+  bar.value = job.done;
+  const gb = job.bytes >= 1e9 ? `${(job.bytes / 1e9).toFixed(1)} GB` : `${Math.round(job.bytes / 1e6)} MB`;
+  $('#origStatus').textContent = job.running
+    ? `${job.done} of ${job.total}` + (job.current ? ` · now: ${job.current}` : '') + (job.stopRequested ? ' · stopping …' : '')
+    : (job.stopped ? `■ Stopped after ${job.done} of ${job.total}. ` : '✓ Done. ') +
+      `${job.made} scene${job.made === 1 ? '' : 's'} exported (${gb})` +
+      (job.skipped ? `, ${job.skipped} ${job.skipped === 1 ? 'was' : 'were'} there already` : '') +
+      (job.errors.length ? `, ${job.errors.length} failed` : '') + `. Folder: ${job.dest}`;
+  $('#origErrors').replaceChildren(...job.errors.map(x => el('li', {}, x)));
+  $('#origStop').hidden = !job.running;
+  $('#origStop').disabled = !!job.stopRequested;
+  $('#origClose').disabled = false;
+}
+
+function watchOriginals() {
+  clearInterval(origPoll);
+  origPoll = setInterval(async () => {
+    const st = await api('/api/originals').catch(() => null);
+    if (!st || !st.job) return;
+    if ($('#origDlg').open) renderOriginalsJob(st.job);
+    if (!st.job.running) { clearInterval(origPoll); origPoll = null; }
+  }, 1500);
+}
+
+async function openOriginalsExport() {
+  let st;
+  try { st = await api('/api/originals'); } catch (err) { toast(err.message); return; }
+  $('#origDlg').showModal();
+  if (st.job && st.job.running) { renderOriginalsJob(st.job); watchOriginals(); return; }
+  $('#origSetup').hidden = false;
+  $('#origProgress').hidden = true;
+  $('#origInfo').textContent = `${st.scenes} video scene${st.scenes === 1 ? ' was' : 's were'} sent so far. ` +
+    'Each is cut from its original video into the folder below.';
+  if (st.dest && !$('#origDest').value) $('#origDest').value = st.dest;
+}
+
+async function runOriginalsExport() {
+  const dest = $('#origDest').value.trim();
+  if (!dest) { toast('Choose a folder first'); return; }
+  try {
+    const { job } = await api('/api/originals/export', { dest });
+    renderOriginalsJob(job);
+    watchOriginals();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 // ---------- spelling check before publishing ----------
 
 // What a part still sends that someone wrote: captions, and the text of text posts.
@@ -2706,6 +2768,19 @@ function initPosts() {
     setMode('arrange');
   });
   $('#postsCancel').addEventListener('click', () => $('#postsDlg').close());
+  $('#origCancel').addEventListener('click', () => $('#origDlg').close());
+  $('#origClose').addEventListener('click', () => $('#origDlg').close());
+  $('#origGo').addEventListener('click', runOriginalsExport);
+  $('#origPick').addEventListener('click', async () => {
+    try {
+      const { folder } = await api('/api/originals/pick', { start: $('#origDest').value.trim() || null });
+      if (folder) $('#origDest').value = folder;
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+  $('#origStop').addEventListener('click', () => api('/api/originals/stop', {}).catch(err => toast(err.message)));
+  $('#origReveal').addEventListener('click', () => api('/api/originals/reveal', {}).catch(err => toast(err.message)));
   $('#postsGo').addEventListener('click', reviewPublish);
   $('#postsSplit').addEventListener('change', ev => {
     localStorage.setItem('media-picker-split', ev.target.checked ? 'on' : 'off');
