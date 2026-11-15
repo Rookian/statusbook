@@ -56,20 +56,11 @@ const COLLAGE_TEMPLATES = [
     polyFrame([[0, 0], [CW, 0], [CW, 760], [0, 1130]]),
     polyFrame([[0, 1175], [CW, 805], [CW, CH], [0, CH]]),
   ] },
-  { id: 'arches2', n: 2, name: 'Arches', frames: [
-    { x: 320, y: 800, w: 500, h: 1000, rot: -3, shape: 'arch', ring: 16 },
-    { x: 760, y: 1130, w: 500, h: 1000, rot: 3, shape: 'arch', ring: 16 },
-  ] },
   { id: 'film3', n: 3, name: 'Film strip', under: 'film', frames: filmFrames },
   { id: 'scattered3', n: 3, name: 'Scattered polaroids', frames: [
     polaroid(370, 420, 520, -9, [pinTop(520, 520 * 0.06)]),
     polaroid(710, 940, 520, 7, [pinTop(520, 520 * 0.06)]),
     polaroid(390, 1450, 520, -4, [pinTop(520, 520 * 0.06)]),
-  ] },
-  { id: 'circles3', n: 3, name: 'Round windows', frames: [
-    { x: CW / 2, y: CH / 2, w: CW, h: CH, rot: 0, shape: 'rect' },
-    { x: 340, y: 1180, w: 540, h: 540, rot: 0, shape: 'circle', ring: 18 },
-    { x: 740, y: 1540, w: 440, h: 440, rot: 0, shape: 'circle', ring: 18 },
   ] },
   { id: 'bands3', n: 3, name: 'Slanted bands', frames: [
     polyFrame([[0, 0], [CW, 0], [CW, 500], [0, 720]]),
