@@ -1944,9 +1944,12 @@ function openPostsExport() {
   updatePostsExportInfo();
   // Which videos need more posts to stay sharp takes a moment to measure.
   if (exportList().some(e => e.type === 'video')) {
-    $('#postsGo').disabled = true;
-    $('#postsGo').replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Checking the videos …');
-    checkVideoPieces(exportList()).then(() => { if ($('#postsDlg').open && !$('#postsSetup').hidden) updatePostsExportInfo(); });
+    videoCheckRunning = true;
+    updatePostsExportInfo();
+    checkVideoPieces(exportList()).finally(() => {
+      videoCheckRunning = false;
+      if ($('#postsDlg').open && !$('#postsSetup').hidden) updatePostsExportInfo();
+    });
   }
   $('#postsTitle').textContent = `Review & publish · ${draftTitle()}`;
   $('#postsPhase').textContent = '';
@@ -1956,11 +1959,13 @@ function openPostsExport() {
   $('#postsSetup').hidden = false;
   $('#postsProgress').hidden = true;
   $('#postsDlg').showModal();
+  reviewSpell();  // after showModal: its "checking" line needs the open window
 }
 
 // Into how many posts each video of the release goes: asked from the server, which
 // measures how many bits the picture needs. Kept per scene and speed.
 const videoPieces = new Map();
+let videoCheckRunning = false;
 const pieceKey = e => `${e.key}|${e.speed || 1}`;
 const splitForQuality = () => localStorage.getItem('media-picker-split') !== 'off';
 const lengthPieces = e => Math.ceil(postLen(e) / posts.limits.maxVideoSeconds);
@@ -1998,6 +2003,10 @@ function updatePostsExportInfo() {
   $('#postsGo').disabled = !files.length;
   const days = dayRangeOf(list);
   $('#postsGo').textContent = `Publish ${files.length} post${files.length === 1 ? '' : 's'}`;
+  if (videoCheckRunning) {
+    $('#postsGo').disabled = true;
+    $('#postsGo').replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Checking the videos …');
+  }
   $('#postsExportSummary').textContent = !files.length ? 'Nothing to publish with this choice.'
     : `${files.length} post${files.length === 1 ? ' goes' : 's go'} to your WhatsApp Status, in this order` + (days ? ` (${days})` : '') + '.';
   // The posts in order, small; a click goes to that post in Compose.
@@ -2046,8 +2055,55 @@ function updatePostsExportInfo() {
   }
   warn.append(el('li', { style: 'color: var(--muted)' },
     `Within WhatsApp's limits: videos MP4, at most ${L.maxVideoShort || 720}p and 30 fps, ${L.maxVideoMB} MB and ${L.maxVideoSeconds} s; photos at most ${L.maxImageSide} px.`));
-  warn.append(el('li', { style: 'color: var(--muted)' }, `The spelling of captions and texts is checked when you click Publish.` +
-    (captions ? ` Files and captions are kept in WhatsApp\\Releases\\${name}.` : '')));
+  // Spelling, checked when the review opened (reviewSpell).
+  const sp = reviewSpellState;
+  if (sp.status === 'checking') {
+    warn.append(el('li', { style: 'color: var(--muted)' }, el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Checking the spelling of captions and texts …'));
+  } else if (sp.status === 'error') {
+    warn.append(el('li', {}, `The spelling check did not work: ${sp.error}`,
+      el('button', { class: 'linkbtn', onclick: () => reviewSpell() }, 'Try again')));
+  } else if (sp.status === 'done' && sp.issues.length) {
+    warn.append(el('li', {}, `${sp.issues.length} possible spelling mistake${sp.issues.length === 1 ? '' : 's'} in captions and texts.`,
+      el('button', { class: 'linkbtn', onclick: openReviewSpell }, 'Show')));
+  } else if (sp.status === 'done') {
+    warn.append(el('li', { style: 'color: var(--muted)' }, '✓ Spelling of captions and texts: nothing found.'));
+  }
+  if (captions) warn.append(el('li', { style: 'color: var(--muted)' }, `Files and captions are kept in WhatsApp\\Releases\\${name}.`));
+}
+
+// ---------- spelling in the review ----------
+
+// The review checks the spelling as soon as it opens; Publish then uses that result
+// (and only asks LanguageTool again for texts changed since). Ignored marks stay
+// ignored for this session.
+let reviewSpellState = { status: 'idle', issues: [] };
+let reviewSpellRun = 0;
+let reviewSpellPromise = null;
+const reviewSpellPart = () => ({ items: exportList().map((e, i) => ({ postKey: e.key, n: i + 1 })) });
+
+function reviewSpell() {
+  reviewSpellPromise = reviewSpellCheck();
+  return reviewSpellPromise;
+}
+
+async function reviewSpellCheck() {
+  const run = ++reviewSpellRun;
+  const fields = spellFields(reviewSpellPart());
+  reviewSpellState = fields.length ? { status: 'checking', issues: [] } : { status: 'none', issues: [] };
+  const redraw = () => { if (run === reviewSpellRun && $('#postsDlg').open && !$('#postsSetup').hidden) updatePostsExportInfo(); };
+  redraw();
+  if (!fields.length) return;
+  try {
+    const issues = await spellIssues(fields);
+    if (run === reviewSpellRun) reviewSpellState = { status: 'done', issues };
+  } catch (err) {
+    if (run === reviewSpellRun) reviewSpellState = { status: 'error', issues: [], error: err.message };
+  }
+  redraw();
+}
+
+function openReviewSpell() {
+  showSpellDialog(reviewSpellState.issues, () => reviewSpell(), { goLabel: 'Done', cancel: false });
 }
 
 // "beach", "DJI_0042_95s", "DJI_0042_95s_1of2", "text": the file name after its number.
@@ -2190,7 +2246,9 @@ async function updateInRelease(r, p, items) {
 async function reviewPublish() {
   const list = exportList();
   if (!list.length) return;
-  // Spelling first, on the posts as they are now; nothing has been made yet.
+  // Spelling first, on the posts as they are now; nothing has been made yet. A check
+  // still running from the review is awaited, so the texts aren't sent twice.
+  if (reviewSpellPromise) await reviewSpellPromise.catch(() => {});
   const fake = { items: list.map((e, i) => ({ postKey: e.key, n: i + 1 })) };
   if (!(await spellcheckBeforePublish(fake))) return;
   $('#postsPhase').textContent = '1 of 2 · Making the files';
@@ -2456,20 +2514,40 @@ function spellFields(p) {
 }
 
 // Resolves true to go on publishing, false to stop.
+// LanguageTool's answers per text, so a text is checked only once while unchanged.
+const spellCache = new Map();
+const spellIgnored = new Set();
+// An ignored word stays ignored in that caption or text, also after other fixes in it.
+const ignoreKey = (f, word) => `${f.e.key}|${f.field}|${word}`;
+
+// The open marks in these fields; only texts not checked yet go to LanguageTool.
+async function spellIssues(fields) {
+  const todo = [...new Set(fields.map(f => f.text).filter(t => !spellCache.has(t)))];
+  if (todo.length) {
+    const { results } = await api('/api/spellcheck', { texts: todo });
+    todo.forEach((t, i) => spellCache.set(t, results[i] || []));
+  }
+  const issues = [];
+  for (const f of fields) {
+    for (const m of spellCache.get(f.text) || []) {
+      if (spellIgnored.has(ignoreKey(f, f.text.substr(m.offset, m.length)))) continue;
+      issues.push({ ...m, f, at: m.offset, orig: f.text.substr(m.offset, m.length) });
+    }
+  }
+  return issues;
+}
+
 async function spellcheckBeforePublish(p) {
   const fields = spellFields(p);
   if (!fields.length) return true;
-  toast('Checking spelling …');
-  let results;
+  let issues;
   try {
-    ({ results } = await api('/api/spellcheck', { texts: fields.map(f => f.text) }));
+    if (fields.some(f => !spellCache.has(f.text))) toast('Checking spelling …');
+    issues = await spellIssues(fields);
   } catch (err) {
     return confirm(`The spelling check did not work: ${err.message}.\n\nPublish without it?`);
   }
-  const issues = [];
-  fields.forEach((f, i) => (results[i] || []).forEach(m =>
-    issues.push({ ...m, f, at: m.offset, orig: f.text.substr(m.offset, m.length) })));
-  if (!issues.length) { toast('✓ Spelling check: nothing found'); return true; }
+  if (!issues.length) return true;
   return new Promise(resolve => showSpellDialog(issues, resolve));
 }
 
@@ -2487,7 +2565,8 @@ function applySpellFix(issue, value, issues) {
   return true;
 }
 
-function showSpellDialog(issues, resolve) {
+// goLabel / cancel: from the review's "Show", the dialog only fixes, it doesn't publish.
+function showSpellDialog(issues, resolve, { goLabel = 'Publish', cancel = true } = {}) {
   const dlg = $('#spellDlg'), list = $('#spellList');
   let open = issues.length, changed = false;
   const count = () => {
@@ -2514,7 +2593,7 @@ function showSpellDialog(issues, resolve) {
         ...issue.replacements.map(r => el('button', {
           onclick: () => { if (applySpellFix(issue, r, issues)) { changed = true; done(`✓ „${issue.orig}" → „${r}"`); } },
         }, r === '' ? '(remove)' : r)),
-        el('button', { class: 'quiet', onclick: () => done(`ignored: „${issue.orig}"`) }, 'Ignore')));
+        el('button', { class: 'quiet', onclick: () => { spellIgnored.add(ignoreKey(issue.f, issue.orig)); done(`ignored: „${issue.orig}"`); } }, 'Ignore')));
     list.append(row);
   }
   count();
@@ -2524,6 +2603,8 @@ function showSpellDialog(issues, resolve) {
     if (changed) { renderGallery({ reveal: false }); renderEditor(); }
     resolve(go);
   };
+  $('#spellGo').textContent = goLabel;
+  $('#spellCancel').hidden = !cancel;
   $('#spellGo').onclick = () => finish(true);
   $('#spellCancel').onclick = () => finish(false);
   dlg.onclose = () => finish(false);  // Esc
