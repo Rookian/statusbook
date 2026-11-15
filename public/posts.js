@@ -1945,7 +1945,7 @@ function openPostsExport() {
   // Which videos need more posts to stay sharp takes a moment to measure.
   if (exportList().some(e => e.type === 'video')) {
     $('#postsGo').disabled = true;
-    $('#postsGo').textContent = 'Checking the videos …';
+    $('#postsGo').replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Checking the videos …');
     checkVideoPieces(exportList()).then(() => { if ($('#postsDlg').open && !$('#postsSetup').hidden) updatePostsExportInfo(); });
   }
   $('#postsTitle').textContent = `Review & publish · ${draftTitle()}`;

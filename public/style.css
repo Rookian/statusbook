@@ -97,6 +97,11 @@ input[type="checkbox"] { accent-color: var(--ink); }
 #shore .w3 { fill: var(--stone); animation: roll 40s linear infinite; }
 #shore .foam { fill: none; stroke: rgba(255, 255, 255, .95); stroke-width: 2.5; stroke-linecap: round; animation: roll 40s linear infinite; }
 @keyframes roll { to { transform: translateX(-50%); } }
+/* A small spinner inside a button while something is being worked out. */
+.spinner { display: inline-block; width: 12px; height: 12px; margin-right: 7px; vertical-align: -1px;
+  border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 .head { position: relative; display: flex; align-items: center; gap: 14px; padding: 14px 24px 2px; flex-wrap: wrap; row-gap: 8px; }
 .head .grow { flex: 1; }
 .head h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; color: #fff; }
