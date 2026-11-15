@@ -2456,6 +2456,7 @@ function watchPublish() {
 // ---------- sent scenes in original quality (server: startOriginalsExport) ----------
 
 let origPoll = null;
+let syncOrigGo = () => {};
 
 function renderOriginalsJob(job) {
   $('#origSetup').hidden = true;
@@ -2499,22 +2500,54 @@ async function openOriginalsExport() {
     'Each is cut from its original video into the folder below.';
   $('#origAgainRow').hidden = !st.exported;
   $('#origAgain').checked = false;
-  $('#origGo').disabled = false;
-  const sync = () => { $('#origGo').disabled = !fresh && !$('#origAgain').checked; };
-  $('#origAgain').onchange = sync;
-  sync();
+  origMessage('');
+  origSpaceOk = null;
+  // Nothing new and nothing to repeat: nothing to export.
+  syncOrigGo = () => { $('#origGo').disabled = !fresh && !$('#origAgain').checked; };
+  $('#origAgain').onchange = syncOrigGo;
+  syncOrigGo();
   if (st.dest && !$('#origDest').value) $('#origDest').value = st.dest;
 }
 
+// What's wrong with the folder, shown right under its field (warn: export is still possible).
+function origMessage(text, warn = false) {
+  const box = $('#origError');
+  box.hidden = !text;
+  box.textContent = text || '';
+  box.classList.toggle('warn', warn);
+  $('#origDest').classList.toggle('invalid', !!text && !warn);
+}
+
+const fmtBytes = b => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(b / 1e6))} MB`);
+let origSpaceOk = null;   // the folder the user chose to export to although space is short
+
 async function runOriginalsExport() {
+  const go = $('#origGo'), again = $('#origAgain').checked;
   const dest = $('#origDest').value.trim();
-  if (!dest) { toast('Choose a folder first'); return; }
+  if (!dest) { origMessage('Choose the folder for the scenes first.'); $('#origDest').focus(); return; }
+  origMessage('');
+  go.disabled = true;
+  go.replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Checking the folder …');
   try {
-    const { job } = await api('/api/originals/export', { dest, again: $('#origAgain').checked });
+    // The folder is checked first: does it exist, can it be written to, is there room.
+    const chk = await api('/api/originals/check', { dest, again });
+    $('#origDest').value = chk.dest;
+    if (chk.free != null && chk.need > chk.free * 0.97 && origSpaceOk !== chk.dest) {
+      origSpaceOk = chk.dest;
+      origMessage(`The ${chk.scenes} scene${chk.scenes === 1 ? '' : 's'} need about ${fmtBytes(chk.need)}, but only ${fmtBytes(chk.free)} are free on that drive. ` +
+        'Make room or choose another folder. Click Export again to start anyway: it stops when the drive is full and continues there next time.', true);
+      return;
+    }
+    const { job } = await api('/api/originals/export', { dest: chk.dest, again });
     renderOriginalsJob(job);
     watchOriginals();
   } catch (err) {
-    toast(err.message);
+    origMessage(err instanceof TypeError ? 'The app on this PC doesn\'t answer. Is Statusbook still running?' : err.message);
+    $('#origDest').focus();
+  } finally {
+    go.disabled = false;
+    go.textContent = 'Export';
+    syncOrigGo();
   }
 }
 
@@ -2888,12 +2921,14 @@ function initPosts() {
   $('#origCancel').addEventListener('click', () => $('#origDlg').close());
   $('#origClose').addEventListener('click', () => $('#origDlg').close());
   $('#origGo').addEventListener('click', runOriginalsExport);
+  $('#origDest').addEventListener('input', () => { origMessage(''); origSpaceOk = null; });
+  $('#origDest').addEventListener('keydown', ev => { if (ev.key === 'Enter' && !$('#origGo').disabled) runOriginalsExport(); });
   $('#origPick').addEventListener('click', async () => {
     try {
       const { folder } = await api('/api/originals/pick', { start: $('#origDest').value.trim() || null });
-      if (folder) $('#origDest').value = folder;
+      if (folder) { $('#origDest').value = folder; origMessage(''); }
     } catch (err) {
-      toast(err.message);
+      origMessage(`The folder window could not be opened: ${err.message}`);
     }
   });
   $('#origStop').addEventListener('click', () => api('/api/originals/stop', {}).catch(err => toast(err.message)));
