@@ -198,7 +198,8 @@ async function postTextOne(text, bg, label, dryRun) {
 
 // A text-only post (not a day intro, which has a map and stays a picture) goes out as
 // text status(es); its caption, if any, is added as the last paragraph.
-const isTextStatus = item => item.type === 'text' && !item.intro && typeof item.text === 'string';
+// (Neither does a collage: it is a picture too.)
+const isTextStatus = item => item.type === 'text' && !item.intro && !item.picture && typeof item.text === 'string';
 const statusTexts = item => splitStatusText([item.text, item.caption].map(t => (t || '').trim()).filter(Boolean).join('\n\n'));
 
 // One post: Status → Add Status → Photos & videos → file → caption → send → wait until sent.
