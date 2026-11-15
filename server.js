@@ -1396,6 +1396,67 @@ async function readExported(folder) {
   }
 }
 
+// The folder for the sent scenes, checked before anything is cut: a real folder on
+// this PC that exists (or can be made) and can be written to. Answers the cleaned-up
+// path; throws with a message that says what to do.
+async function checkExportDest(input) {
+  const bad = msg => Object.assign(new Error(msg), { code: 400 });
+  // A path copied in Explorer comes in quotes.
+  const raw = String(input || '').trim().replace(/^"(.*)"$/, '$1').trim();
+  if (!raw) throw bad('Choose the folder for the scenes first.');
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
+    throw bad('That is a web address. Statusbook writes to a folder on this PC: for Google Drive, choose your Drive folder here (it needs Google Drive for desktop), for example G:\\My Drive\\Bali.');
+  }
+  if (!path.isAbsolute(raw)) throw bad('Give the whole path of the folder, starting with its drive, for example D:\\Sent scenes. "Browse …" fills it in for you.');
+  const dest = path.resolve(raw);
+  // A drive that doesn't answer (network or cloud drive that is offline) must not hang the app.
+  const slow = new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })), 8000));
+  try {
+    await Promise.race([fsp.mkdir(dest, { recursive: true }), slow]);
+  } catch (err) {
+    if (err.code === 'ETIMEDOUT') throw bad('That folder doesn\'t answer. Is it on a network or cloud drive that is offline right now?');
+    const root = path.parse(dest).root;
+    if (err.code === 'ENOENT') throw bad(`This folder can't be made: ${fs.existsSync(root) ? 'its path doesn\'t exist' : `the drive ${root} doesn't exist on this PC`}.`);
+    if (err.code === 'EEXIST' || err.code === 'ENOTDIR') throw bad('That is a file, not a folder.');
+    if (err.code === 'EACCES' || err.code === 'EPERM') throw bad('Windows doesn\'t allow making a folder there. Choose another place.');
+    throw bad(`This folder can't be used: ${err.message}`);
+  }
+  const probe = path.join(dest, `.statusbook-${crypto.randomBytes(4).toString('hex')}.tmp`);
+  try {
+    await fsp.writeFile(probe, '');
+    await fsp.unlink(probe);
+  } catch (err) {
+    await fsp.unlink(probe).catch(() => {});
+    throw bad(`Nothing can be written into this folder (${err.code || err.message}). Choose another one.`);
+  }
+  return dest;
+}
+
+// Free space on the drive of a folder, or null if it can't be told.
+async function freeBytes(dir) {
+  try {
+    const s = await fsp.statfs(dir);
+    return s.bavail * s.bsize;
+  } catch {
+    return null;
+  }
+}
+
+// Roughly how many bytes the scenes take when cut out of their originals.
+async function scenesBytes(scenes) {
+  let total = 0;
+  const durations = new Map();
+  for (const s of scenes) {
+    const src = path.join(currentFolder, path.basename(s.source));
+    try {
+      if (!durations.has(src)) durations.set(src, { size: (await fsp.stat(src)).size, duration: (await probeFile(src)).duration || 0 });
+      const d = durations.get(src);
+      total += d.duration ? d.size * Math.min(1, (s.end - s.start + 1) / d.duration) : d.size;
+    } catch { /* a missing original is reported when it is cut */ }
+  }
+  return total;
+}
+
 let originalsJob = null;
 
 // Cuts every sent scene from its original into dest, without re-encoding (stream
@@ -1432,6 +1493,7 @@ function startOriginalsExport(dest, scenes, again = false) {
             if (!exported[s.file]) await remember(s.file);
           } else {
             const src = path.join(folder, path.basename(s.source));
+            if (!fs.existsSync(src)) throw new Error(`its original ${path.basename(src)} is no longer in the journey folder`);
             await run(ffmpeg, ['-y', '-v', 'error', '-ss', String(s.start), '-t', String(s.end - s.start), '-i', src,
               '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-map_metadata', '0',
               '-avoid_negative_ts', 'make_zero', '-movflags', '+faststart', '-f', path.extname(out) === '.mov' ? 'mov' : 'mp4', tmp]);
@@ -1444,7 +1506,19 @@ function startOriginalsExport(dest, scenes, again = false) {
           }
         } catch (err) {
           await fsp.unlink(tmp).catch(() => {});
-          job.errors.push(`${s.file}: ${(err.stderr || err.message || '').trim().split('\n').pop() || 'could not be cut'}`);
+          const why = (err.stderr || err.message || '').trim().split('\n').pop() || 'could not be cut';
+          // A full drive or a folder that went away fails for every scene: stop there.
+          if (/no space left|ENOSPC|disk full/i.test(why + (err.code || ''))) {
+            job.errors.push(`The drive of ${dest} is full. Stopped at ${s.file}; make room and export again, it continues where it stopped.`);
+            job.stopped = true;
+            break;
+          }
+          if (!fs.existsSync(dest)) {
+            job.errors.push(`The folder ${dest} is no longer there (drive unplugged or Google Drive not running?). Stopped at ${s.file}.`);
+            job.stopped = true;
+            break;
+          }
+          job.errors.push(`${s.file}: ${why}`);
         }
         job.done++;
       }
@@ -1810,12 +1884,19 @@ const routes = {
   'POST /api/originals/pick': async body => ({
     folder: await pickFolder(body.start || null, 'Choose the folder for the sent scenes in original quality', true),
   }),
+  // Checks the folder before the export: { dest, need, free } (bytes; null if unknown).
+  'POST /api/originals/check': async body => {
+    if (!currentFolder) throw Object.assign(new Error('No journey is open'), { code: 400 });
+    const dest = await checkExportDest(body.dest);
+    const exported = body.again ? {} : await readExported(currentFolder);
+    const todo = (await sentScenes()).filter(s => !exported[s.file] && !fs.existsSync(path.join(dest, s.file)));
+    return { dest, scenes: todo.length, need: await scenesBytes(todo), free: await freeBytes(dest) };
+  },
   'POST /api/originals/export': async body => {
-    if (!currentFolder) throw Object.assign(new Error('No folder is open'), { code: 400 });
-    if (!tool('ffmpeg')) throw new Error('ffmpeg is not installed');
-    if (originalsJob && originalsJob.running) throw Object.assign(new Error('An export is running already'), { code: 409 });
-    const dest = String(body.dest || '').trim();
-    if (!dest || !path.isAbsolute(dest)) throw Object.assign(new Error('Choose a folder first'), { code: 400 });
+    if (!currentFolder) throw Object.assign(new Error('No journey is open'), { code: 400 });
+    if (!tool('ffmpeg')) throw Object.assign(new Error('ffmpeg is not installed on this PC, so the scenes can\'t be cut.'), { code: 400 });
+    if (originalsJob && originalsJob.running) throw Object.assign(new Error('An export is running already.'), { code: 409 });
+    const dest = await checkExportDest(body.dest);
     saveSettings({ exportDest: { ...(loadSettings().exportDest || {}), [currentFolder.toLowerCase()]: dest } });
     return { job: startOriginalsExport(dest, await sentScenes(), !!body.again) };
   },
