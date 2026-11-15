@@ -189,6 +189,9 @@
         <div class="field" id="introField"><span>Day map</span>
           <div id="introInfo"></div>
         </div>
+        <div class="field" id="collageField"><span>Collage</span>
+          <div class="collage-line"><span id="collageInfo" class="muted"></span><button id="pCollageEdit">▦ Change collage …</button></div>
+        </div>
         <div class="field" id="pPosField"><span>Position</span>
           <div class="seg" id="pPos"><button data-v="top">Top</button><button data-v="middle">Middle</button><button data-v="bottom">Bottom</button></div>
         </div>
@@ -308,6 +311,38 @@
     </div>
   </dialog>
 
+  <!-- A collage of two to four photos as one post (collage.js). -->
+  <dialog id="collageDlg">
+    <h2 id="collageTitle">New collage</h2>
+    <div class="collage-grid">
+      <div class="collage-preview">
+        <canvas id="collageCanvas" width="405" height="720"></canvas>
+      </div>
+      <div class="collage-side">
+        <div class="field"><span>Layout</span>
+          <div id="collageTemplates"></div>
+        </div>
+        <div class="field"><span>Photos <small class="muted">(click in the order you want them)</small></span>
+          <div id="collagePhotos"></div>
+        </div>
+        <div class="field"><span>Border</span>
+          <div class="seg" id="collageGap"><button data-v="none">None</button><button data-v="thin">Thin</button><button data-v="wide">Wide</button></div>
+        </div>
+        <div class="field" id="collageRoundField"><span>Corners</span>
+          <div class="seg" id="collageRound"><button data-v="round">Round</button><button data-v="square">Square</button></div>
+        </div>
+        <div class="field" id="collageBgField"><span>Border colour</span>
+          <div id="collageBg" class="swatches"></div>
+        </div>
+        <p id="collageHint" class="muted"></p>
+      </div>
+    </div>
+    <div class="btns">
+      <button id="collageCancel">Cancel</button>
+      <button id="collageGo" class="primary">Create collage</button>
+    </div>
+  </dialog>
+
   <dialog id="spellDlg">
     <h2>Spelling check</h2>
     <p id="spellCount"></p>
@@ -416,6 +451,7 @@
   <script src="grade.js"></script>
   <script src="app.js"></script>
   <script src="textsplit.js"></script>
+  <script src="collage.js"></script>
   <script src="posts.js"></script>
   <script src="journeys.js"></script>
 </body>

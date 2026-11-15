@@ -55,6 +55,7 @@ Inside a journey you put together **releases**, the batches you post to your Sta
 **Arranging**
 - Posts in phone format (9:16), exactly as they will look on the Status
 - Captions with emoji, text-only posts in any color, and free reordering by drag and drop
+- **Collages:** two to four photos as one post, with 12 layouts, borders and rounded corners; drag a photo in its frame to choose what it shows
 - Day intros with a map of the day's spots (Google Maps Static API) and a Google Maps link in the caption
 - When a release begins in the middle of a day, a "Fortsetzung" intro is added automatically
 - Locations from photo EXIF and video metadata; drone videos borrow the location of the nearest photo

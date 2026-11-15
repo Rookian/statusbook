@@ -9,7 +9,8 @@
 //   defaults: look of new text posts
 //   media:    per photo/scene, keyed "img:<name>" / "vid:<name>@<start>-<end>":
 //             { caption, removed }
-//   texts:    text-only posts in order: { id, after: <media key or null>, at, text, caption, bg, ... }
+//   texts:    text-only posts in order: { id, after: <media key or null>, at, text, caption, bg, ... };
+//             a collage is one of them, with collage: { tpl, images, ... } (collage.js)
 //   order:    every post key in the chosen order, once posts were rearranged
 // A post's status follows from the release folders: not prepared yet, prepared (in a
 // release part) or sent (ticked in that part's release.json).
@@ -131,6 +132,7 @@ function releaseChanges(item, e = entryFor(item.postKey || item.key)) {
       picture = picture || (item.intro.place || '') !== (e.cfg.place ? e.cfg.place.label : '') ||
         !!item.intro.noLocation !== !!e.cfg.noLocation;
     }
+    if (v.collage && item.collage) picture = item.collage !== collageSig(v.collage); // photos, layout or look changed
   } else if (item.format) {
     picture = item.format !== 'original';  // an old file with a blurred background
   }
@@ -192,7 +194,9 @@ function migrateV1(d) {
 
 function buildEntries() {
   const media = [];
+  const inCollage = collagePhotoNames();  // those photos are part of a collage post
   for (const it of state.items) {
+    if (it.type === 'image' && inCollage.has(it.name)) continue;
     if (it.type === 'image' && it.favorite) {
       media.push({ kind: 'media', type: 'image', key: imgKey(it.name), source: it.name, item: it, start: 0, time: it.date || '' });
     } else if (it.type === 'video') {
@@ -289,6 +293,8 @@ function postView(e) {
   // Only text-only posts have text on the picture.
   const v = { type: e.type, text: e.type === 'text' ? e.cfg.text || '' : '', caption: e.cfg.caption || '', bg: e.cfg.bg };
   for (const f of LOOK_FIELDS) v[f] = e.cfg[f] !== undefined ? e.cfg[f] : base[f];
+  // A collage is a picture of its photos, without text on it.
+  if (e.cfg.collage) Object.assign(v, { collage: e.cfg.collage, text: '' });
   // Day intro: fixed layout, the date on top and the map below it.
   // Without any location there is no map, so the date moves to the middle.
   if (e.cfg.intro) {
@@ -330,6 +336,7 @@ function mediaSize(m) {
 }
 
 function drawBackground(ctx, post, media, scale) {
+  if (post.collage) { drawCollage(ctx, post.collage, scale); return; }
   if (post.type === 'text') {
     ctx.fillStyle = post.bg || BG_COLORS[0];
     ctx.fillRect(0, 0, SW, SH);
@@ -701,6 +708,14 @@ async function deleteDraft() {
       it.scenes = res.scenes;
     }
     const dropTexts = new Set(list.filter(x => x.kind === 'text').map(x => x.cfg));
+    // The photos of the draft's collages are unpicked like its other photos.
+    for (const t of dropTexts) {
+      for (const name of collageNames(t.collage)) {
+        await api('/api/favorite', { name, value: false });
+        const it = itemOf(name);
+        if (it) it.favorite = false;
+      }
+    }
     posts.data.texts = posts.data.texts.filter(t => !dropTexts.has(t));
     for (const e of list) if (e.kind === 'media') delete posts.data.media[e.key];
   } catch (err) {
@@ -737,6 +752,7 @@ function newSection() {
   return gallerySection('section:new', true, 'gsec-new', draftTitle(), [
     el('span', { class: 'chip new' }, `Draft · ${n} post${n === 1 ? '' : 's'}`),
     el('span', { class: 'grow' }),
+    el('button', { onclick: () => openCollage(), title: 'Put two to four photos of this release together as one post' }, '▦ Collage'),
     el('button', {
       class: 'primary', disabled: n ? null : '', onclick: openPostsExport,
       title: 'A last look, then everything goes to your WhatsApp Status',
@@ -899,14 +915,14 @@ function renderCard(e, num, row = null) {
   if (!row && e.removed) frame.append(el('div', { class: 'gone' }, 'Removed'));
   if (missing) frame.append(el('div', { class: 'gone' }, 'File missing'));
   const time = e.time ? e.time.slice(11, 16) : '';
-  const name = e.type === 'text' ? (e.cfg.intro ? 'Day intro' : 'Text') : e.source;
+  const name = e.type === 'text' ? (e.cfg.intro ? 'Day intro' : e.cfg.collage ? 'Collage' : 'Text') : e.source;
   const caption = row ? row.item.caption || '' : fullCaption(e, v);
   const card = el('div', {
     class: 'card' + (e.key === posts.selKey ? ' sel' : '') + (!row && e.removed ? ' removed' : '') + (row ? ' rel' : ''),
     'data-key': e.key, draggable: row ? null : 'true',
     title: row
       ? `${row.item.file}\nDouble-click: the released file at real size`
-      : (e.type === 'text' ? (v.text || 'Text post') : e.source) + '\nDrag to move · double-click: real size',
+      : (e.type === 'text' ? (v.collage ? `Collage of ${v.collage.images.length} photos` : v.text || 'Text post') : e.source) + '\nDrag to move · double-click: real size',
     onclick: () => selectEntry(e.key),
     ondblclick: row
       ? () => {
@@ -962,11 +978,12 @@ async function viewPost(e) {
     const s = dayMapState(v.intro.day);
     if (s.ready) await s.ready;
   }
+  if (v.collage) await collageReady(v.collage).catch(err => toast(err.message));
   const canvas = document.createElement('canvas');
   canvas.width = SW;
   canvas.height = SH;
   renderPost(canvas, v, null, 1, false);
-  openViewer({ title: v.intro ? 'Day intro' : 'Text post', type: 'canvas', canvas });
+  openViewer({ title: v.intro ? 'Day intro' : v.collage ? 'Collage' : 'Text post', type: 'canvas', canvas });
 }
 
 // Drag a card onto another: dropped on its left half it goes in front, on the right half behind.
@@ -1071,14 +1088,17 @@ function renderEditor() {
   // Text on the picture and its look only exist for text-only posts.
   const isText = e.type === 'text';
   const isIntro = !!(e.cfg && e.cfg.intro);
-  for (const id of ['#pTextField', '#pBgField']) $(id).hidden = !isText;
-  // A day intro has a fixed layout (date on top, map below).
-  for (const id of ['#pPosField', '#pStyleField', '#pSizeField']) $(id).hidden = !isText || isIntro;
+  const isCollage = !!(e.cfg && e.cfg.collage);
+  for (const id of ['#pTextField', '#pBgField']) $(id).hidden = !isText || isCollage;
+  // A day intro has a fixed layout (date on top, map below); a collage has no text on it.
+  for (const id of ['#pPosField', '#pStyleField', '#pSizeField']) $(id).hidden = !isText || isIntro || isCollage;
+  $('#collageField').hidden = !isCollage;
+  if (isCollage) $('#collageInfo').textContent = `${e.cfg.collage.images.length} photos · ${collageTemplate(e.cfg.collage.tpl).name.toLowerCase()}`;
   $('#introField').hidden = !isIntro;
   if (isIntro) renderIntroInfo(e);
   $('#geoField').hidden = isText;
   $('#speciesField').hidden = isText;
-  $('#pRemove').textContent = e.type === 'text' ? '🗑 Delete text post' : e.removed ? '↩ Restore post' : '✕ Remove post';
+  $('#pRemove').textContent = isCollage ? '🗑 Split up collage' : e.type === 'text' ? '🗑 Delete text post' : e.removed ? '↩ Restore post' : '✕ Remove post';
   const info = [];
   if (e.type === 'video') {
     info.push(`Scene ${e.sceneNo} of ${e.source}: ${fmtTime(e.start)} → ${fmtTime(e.end)} (${postLen(e).toFixed(1)} s` +
@@ -1086,7 +1106,8 @@ function renderEditor() {
     if (postLen(e) > STATUS_LIMIT_S) info.push(`⚠ Longer than ${STATUS_LIMIT_S} s: WhatsApp Status only shows the first ${STATUS_LIMIT_S} s.`);
   }
   if (e.type === 'image') info.push(`Photo ${e.source}.`);
-  if (isText && !isIntro) {
+  if (isCollage) info.push('Goes out as one picture. Its photos are no posts of their own while they are in the collage.');
+  if (isText && !isIntro && !isCollage) {
     // Sent as WhatsApp's own text status (publisher.js), not as the picture shown here.
     const full = [v.text, v.caption].map(t => (t || '').trim()).filter(Boolean).join('\n\n');
     const n = splitStatusText(full).length;
@@ -1166,7 +1187,7 @@ function toggleRemoved() {
   if (!e) return;
   if (!isNew(e)) { toast('This post is in a release already'); return; }
   if (e.kind === 'text') {
-    if (!confirm('Delete this text post?')) return;
+    if (!confirm(e.cfg.collage ? 'Split up this collage? Its photos become single posts again.' : 'Delete this text post?')) return;
     const list = visibleEntries();
     const i = list.findIndex(x => x.key === e.key);
     posts.data.texts = posts.data.texts.filter(t => t !== e.cfg);
@@ -2016,7 +2037,7 @@ function updatePostsExportInfo() {
     const style = e.kind === 'media' ? mediaStyle(itemOf(e.source)) : null;
     return el('div', { class: 'rthumb' + (e.type === 'text' ? ' text' : ''), title: `${pad2(i + 1)} · ` + (e.type === 'text' ? (postView(e).text || 'Text post').split('\n')[0] : e.source),
       onclick: () => { if (!e.cfg.auto) showPostFromReview(e.key); } },
-    e.type === 'text' ? el('span', {}, e.cfg.intro ? '🗺' : 'Aa')
+    e.type === 'text' ? el('span', {}, e.cfg.intro ? '🗺' : e.cfg.collage ? '▦' : 'Aa')
       : el('img', { src: thumbUrl(e), loading: 'lazy', alt: '', class: rotClass(rotOf(e.source)).trim() || null, style }),
     e.type === 'video' ? el('i', {}, '▶') : null);
   }));
@@ -2107,7 +2128,7 @@ function openReviewSpell() {
 }
 
 // "beach", "DJI_0042_95s", "DJI_0042_95s_1of2", "text": the file name after its number.
-const releaseFileBase = it => (it.e.type === 'text' ? 'text' : fileBase(it.e.source) + (it.e.type === 'video' ? `_${Math.floor(it.start)}s` : '')) +
+const releaseFileBase = it => (it.e.type === 'text' ? (it.e.cfg.collage ? 'collage' : 'text') : fileBase(it.e.source) + (it.e.type === 'video' ? `_${Math.floor(it.start)}s` : '')) +
   (it.piece ? `_${it.piece.replace('/', 'of')}` : '');
 
 // Makes one file of a release part (it: from releaseItems) and returns its entry for
@@ -2169,6 +2190,8 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
       if (s.ready) await s.ready;
       if (s.error) throw new Error(s.error);
     }
+    // A collage needs its photos loaded at real size.
+    if (v.collage) await collageReady(v.collage);
     renderPost(canvas, v, null, 1, false);
     file += '.jpg';
     await apiRetry('/api/posts/image', { ...where, file, data: canvas.toDataURL('image/jpeg', 0.92) });
@@ -2186,8 +2209,11 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
     caption: it.caption,
     text: e.type === 'text' ? v.text.trim() : undefined,
     bg: e.type === 'text' ? v.bg : undefined,
+    // A collage: what it was made of (to notice changes), and its photos, which count as released.
+    collage: v.collage ? collageSig(v.collage) : undefined,
+    sources: v.collage ? collageNames(v.collage) : undefined,
     // Text layout, so a later change of it can be noticed.
-    look: e.type === 'text' && !v.intro ? { position: v.position, style: v.style, size: v.size } : undefined,
+    look: e.type === 'text' && !v.intro && !v.collage ? { position: v.position, style: v.style, size: v.size } : undefined,
     intro: v.intro ? {
       day: v.intro.day, pins: dayPins(v.intro.day).length,
       place: e.cfg.place ? e.cfg.place.label : undefined, noLocation: e.cfg.noLocation || undefined,
@@ -2823,6 +2849,8 @@ function initPosts() {
     try { await navigator.clipboard.writeText(text); toast('Caption copied'); } catch { toast('Could not copy'); }
   });
   $('#pRemove').addEventListener('click', toggleRemoved);
+  $('#pCollageEdit').addEventListener('click', () => { const e = curEntry(); if (e && e.cfg.collage) openCollage(e); });
+  initCollage();
   $('#pEarlier').addEventListener('click', () => stepPost(-1));
   $('#pLater').addEventListener('click', () => stepPost(1));
   $('#googleSave').addEventListener('click', () => {

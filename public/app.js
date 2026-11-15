@@ -188,12 +188,14 @@ function releasedFiles() {
   posts.releases.forEach((r, i) => {
     for (const p of r.parts) {
       for (const x of p.items) {
-        if (!x.source) continue;
-        const m = map.get(x.source) || { no: 0, all: 0, sent: 0 };
-        m.no = i + 1;
-        m.all++;
-        if (x.sentAt) m.sent++;
-        map.set(x.source, m);
+        // A collage counts for each of its photos.
+        for (const source of x.source ? [x.source] : x.sources || []) {
+          const m = map.get(source) || { no: 0, all: 0, sent: 0 };
+          m.no = i + 1;
+          m.all++;
+          if (x.sentAt) m.sent++;
+          map.set(source, m);
+        }
       }
     }
   });

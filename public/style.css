@@ -413,6 +413,28 @@ dialog progress { width: 100%; height: 10px; accent-color: var(--ink); }
 #postsThumbs .rthumb i { position: absolute; right: 2px; bottom: 1px; color: #fff; font-style: normal; font-size: 10px; text-shadow: 0 0 3px #000; }
 #postsThumbs .rthumb:hover { outline: 2px solid #0b7d78; }
 #postsSplitRow { display: flex; gap: 6px; align-items: center; margin: 0 0 10px; font-size: 13px; }
+/* Collage: its line in the editor and its dialog */
+.collage-line { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+#collageDlg { width: min(900px, 96vw); }
+.collage-grid { display: grid; grid-template-columns: auto 1fr; gap: 22px; align-items: start; }
+.collage-preview canvas { width: 270px; height: 480px; border-radius: 14px; box-shadow: 0 6px 22px rgba(12, 53, 50, .22); cursor: grab; touch-action: none; display: block; }
+.collage-preview canvas:active { cursor: grabbing; }
+.collage-side { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+#collageTemplates { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.ctgroup { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.ctrow { display: flex; gap: 6px; }
+.ctpl { padding: 6px 7px; border-radius: 10px; line-height: 0; }
+.ctpl svg rect { fill: #b9c6c2; }
+.ctpl:hover svg rect { fill: #8fa5a0; }
+.ctpl.on { box-shadow: 0 0 0 2px var(--ink); }
+.ctpl.on svg rect { fill: var(--ink); }
+#collagePhotos { display: flex; flex-wrap: wrap; gap: 6px; max-height: 176px; overflow-y: auto; padding: 3px; }
+.cphoto { position: relative; width: 62px; height: 62px; padding: 0; border-radius: 9px; overflow: hidden; border: none; flex: none; }
+.cphoto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cphoto.on { box-shadow: 0 0 0 3px var(--ink); }
+.cphoto .cnum { position: absolute; left: 4px; top: 4px; min-width: 20px; height: 20px; border-radius: 10px; background: var(--ink); color: #fff; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; }
+#collageHint { margin: 6px 0 0; font-size: 12.5px; }
+@media (max-width: 700px) { .collage-grid { grid-template-columns: 1fr; justify-items: center; } }
 /* Releases: the line for exporting the sent scenes, and its dialog */
 .export-line { display: flex; align-items: center; gap: 10px; }
 .export-line .grow { flex: 1; }
