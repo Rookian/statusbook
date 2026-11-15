@@ -89,6 +89,9 @@ async function api(url, body) {
 let toastTimer;
 function toast(msg) {
   const t = $('#toast');
+  // Above an open dialog too: those are drawn over everything else on the page.
+  const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  if (t.parentElement !== host) host.append(t);
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
