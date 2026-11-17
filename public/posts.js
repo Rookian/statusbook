@@ -817,7 +817,10 @@ function partSection(r, p) {
     changed ? el('span', { class: 'chip changed', title: 'Changed after the release was made; updated in the release when you publish' }, `✎ ${changed} changed`) : null,
     el('span', { class: 'grow' }),
     el('button', { title: 'Open the folder of this part', onclick: () => api('/api/reveal', { release: r.release, part: p.part }).catch(err => toast(err.message)) }, ic('folder')),
-    allSent ? null : el('button', { class: 'primary', title: 'Post this part to your WhatsApp Status', onclick: () => publishPart(r, p) }, ic('send'), 'Publish'),
+    allSent ? null : el('button', {
+      class: 'primary', title: sent ? 'Post the rest to your WhatsApp Status' : 'Post this to your WhatsApp Status',
+      onclick: () => publishPart(r, p),
+    }, ic('send'), sent ? `Continue publishing (${p.items.length - sent} left)` : 'Publish'),
     allSent
       ? el('button', { onclick: () => setPartSent(r, p, keys, false) }, 'Mark as not sent')
       : el('button', { title: 'Only if you posted it yourself', onclick: () => setPartSent(r, p, keys, true) }, '✓ Mark as sent'),
@@ -2382,55 +2385,148 @@ let publishPoll = null;
 let publishSeen = -1;
 let reviewPublishing = false;   // started from the Review & publish window: progress shows there
 
+// The part a publish job works on, from the releases as they are now.
+function jobPart(job) {
+  const r = posts.releases.find(x => x.release === job.release);
+  const p = r && r.parts.find(x => x.part === job.part);
+  return p ? { r, p } : null;
+}
+
+// "post 5 (video)": how a post of a part is called towards the user.
+function postName(p, key) {
+  const it = p && p.items.find(i => i.key === key);
+  if (!it) return 'a post';
+  const kind = it.intro ? 'day intro' : it.collage ? 'collage' : it.type === 'text' ? 'text' : it.type === 'video' ? 'video' : 'photo';
+  return `post ${it.n} (${kind})`;
+}
+
+// What the user needs to know about a publish job, and what they can do next:
+// { title, text, bar: [value, max], running, bad, actions: [{ label, primary, run }] }.
+// Counts are those of the whole part, also when publishing was continued.
+function publishView(job) {
+  const jp = jobPart(job);
+  const p = jp && jp.p;
+  const total = p ? p.items.length : job.total;
+  const before = Math.max(0, total - job.total);   // sent before this run
+  const sent = before + job.done;
+  const where = (p && p.parts > 1 ? `Part ${p.partNo} of ` : '') + `Release ${releaseTitle(job.release)}`;
+  const v = { where, bar: [sent, Math.max(1, total)], running: !!job.running, bad: false, actions: [] };
+  const cont = (label, arrivedKey) => ({ label, primary: true, run: () => resumePublish(job, arrivedKey) });
+  if (job.running) {
+    v.title = 'Posting to WhatsApp';
+    v.text = `Post ${Math.min(total, sent + 1)} of ${total}` +
+      (job.note && job.note.retry ? ` · that didn't work, trying again (try ${job.note.retry} of 3)` : '') +
+      (job.note && job.note.slow ? ' · WhatsApp is still sending it, the connection seems slow' : '') +
+      (job.stopRequested ? ' · stopping after this post' : '');
+    return v;
+  }
+  const name = postName(p, job.failedKey);
+  const sure = `${sent} of ${total} posts are sent`;
+  if (job.why === 'uncertain') {
+    v.bad = true;
+    v.title = `Did ${name} arrive?`;
+    v.text = `WhatsApp was still sending ${name} after 10 minutes, so it is not clear whether it went out. ` +
+      `Look at your status on the phone. Apart from it, ${sure}.`;
+    v.actions = [cont('✓ It is there: continue', job.failedKey), { label: 'It is not there: send it again', run: () => resumePublish(job) }];
+  } else if (job.error) {
+    v.bad = true;
+    v.title = 'Publishing stopped';
+    v.text = (job.why === 'start' ? `Publishing could not start: ${job.error.replace(/\.$/, '')}.`
+      : job.why === 'closed' ? 'The WhatsApp window was closed.'
+      : job.why === 'refused' ? `WhatsApp doesn't take ${name}: the file may be too big, or of a kind it doesn't support.`
+        : /not signed in/i.test(job.error) ? 'WhatsApp Web is not signed in any more.'
+          : `${name[0].toUpperCase()}${name.slice(1)} could not be posted, also after three tries.`) +
+      ` ${sure}; nothing is lost.`;
+    v.detail = job.why === 'error' ? job.error : '';
+    v.actions = [cont(job.why === 'refused' ? 'Try again' : 'Continue')];
+  } else if (job.stopped) {
+    v.title = 'Stopped';
+    v.text = `${sure}. Continue whenever you like.`;
+    v.actions = [cont('Continue')];
+  } else {
+    v.title = '✓ Published';
+    v.text = `All ${total} posts are on your WhatsApp Status.`;
+  }
+  return v;
+}
+
+const publishActions = v => v.actions.map(a => el('button', { class: a.primary ? 'primary' : null, onclick: a.run }, a.label));
+
+// Goes on with a part after publishing stopped. arrivedKey: a post the user saw on
+// the phone although it was never confirmed; it is ticked as sent first.
+async function resumePublish(job, arrivedKey) {
+  const inReview = $('#postsDlg').open && !$('#postsProgress').hidden;
+  try {
+    if (arrivedKey) {
+      await api('/api/releases/sent', { release: job.release, part: job.part, keys: [arrivedKey], sent: true });
+      await loadReleases();
+      if (inPostsView()) { renderGallery({ reveal: false }); renderEditor(); }
+    }
+    const jp = jobPart(job);
+    if (!jp) { toast('That release is no longer there'); return; }
+    if (!jp.p.items.some(i => !i.sentAt)) {
+      // It was the last post: everything is out.
+      reviewPublishing = inReview;
+      renderPublishPanel({ release: job.release, part: job.part, running: false, done: 0, total: 0 });
+      return;
+    }
+    if (inReview) { $('#postsPhase').textContent = 'Posting to WhatsApp'; $('#postsActions').replaceChildren(); }
+    await publishPart(jp.r, jp.p, { quiet: true, review: inReview });
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 // The progress in the Review & publish window.
 function renderReviewProgress(job, note) {
   const stop = $('#postsStop');
   if (note) { $('#postsStatus').textContent = note; return; }
+  const v = publishView(job);
   const bar = $('#postsBar');
-  bar.max = Math.max(1, job.total);
-  bar.value = job.done;
-  stop.hidden = !job.running;
+  bar.max = v.bar[1];
+  bar.value = v.bar[0];
+  stop.hidden = !v.running;
   stop.disabled = !!job.stopRequested;
-  $('#postsClose').disabled = !!job.running;
-  if (job.running) {
-    $('#postsStatus').textContent = `${job.done} of ${job.total} sent` + (job.current ? ` · now: ${job.current}` : '') +
-      (job.stopRequested ? ' · stopping after this post …' : '');
-    return;
-  }
-  reviewPublishing = false;
-  $('#postsPhase').textContent = job.error ? '⚠ Publishing stopped' : job.stopped ? '■ Stopped' : '✓ Published';
-  $('#postsStatus').textContent = job.error
-    ? `Stopped after ${job.done} of ${job.total}: ${job.error}. Posts that went out are ticked; publish the rest from the Releases page.`
-    : job.stopped ? `Stopped after ${job.done} of ${job.total}, as asked. The rest can be published from the Releases page.`
-      : `All ${job.done} posts are on your WhatsApp Status.`;
+  $('#postsClose').disabled = v.running;
+  $('#postsPhase').textContent = (v.bad ? '⚠ ' : '') + (v.running ? `2 of 2 · ${v.title}` : v.title);
+  $('#postsStatus').textContent = v.text;
+  $('#postsStatus').title = v.detail || '';
+  $('#postsActions').replaceChildren(...publishActions(v));
+  if (!v.running) reviewPublishing = false;
 }
 
 function renderPublishPanel(job, note) {
   if (reviewPublishing && $('#postsDlg').open) { renderReviewProgress(job, note); return; }
   const panel = $('#publishPanel');
   panel.hidden = false;
-  panel.classList.toggle('error', !!(job && job.error));
   panel.replaceChildren();
   if (note) {
+    panel.classList.remove('error');
     panel.append(el('span', { class: 'text' }, note));
     return;
   }
-  const where = `${job.part} of release ${releaseTitle(job.release)}`;
-  if (job.running) {
-    const bar = el('progress', { max: String(job.total) });
-    bar.value = job.done;
-    panel.append(
-      el('span', { class: 'text' }, `Publishing ${where}: ${job.done} of ${job.total} sent` +
-        (job.current ? ` · now: ${job.current}` : '') + (job.stopRequested ? ' · stopping after this post …' : '')),
-      bar,
-      el('button', { disabled: job.stopRequested ? '' : null, onclick: () => api('/api/publish/stop', {}).catch(err => toast(err.message)) }, '■ Stop after this post'));
-  } else {
-    const msg = job.error
-      ? `⚠ ${where}: stopped after ${job.done} of ${job.total}. ${job.error}. Posts that went out are ticked; click Publish again to continue with the rest.`
-      : job.stopped ? `■ ${where}: stopped after ${job.done} of ${job.total}, as asked. Click Publish to continue.`
-        : `✓ ${where} is published: ${job.done} of ${job.total} posts sent.`;
-    panel.append(el('span', { class: 'text' }, msg), el('button', { onclick: () => { panel.hidden = true; } }, 'Close'));
-  }
+  const v = publishView(job);
+  panel.classList.toggle('error', v.bad);
+  const bar = el('progress', { max: String(v.bar[1]) });
+  bar.value = v.bar[0];
+  panel.append(
+    el('span', { class: 'text', title: v.detail || null }, el('b', {}, `${v.bad ? '⚠ ' : ''}${v.where}: ${v.title}. `), v.text),
+    v.running ? bar : null,
+    v.running ? el('button', { disabled: job.stopRequested ? '' : null, onclick: () => api('/api/publish/stop', {}).catch(err => toast(err.message)) }, '■ Stop after this post') : null,
+    ...publishActions(v),
+    v.running ? null : el('button', { onclick: () => { panel.hidden = true; } }, 'Close'));
+}
+
+// When Releases or Compose comes up: a publish that is still running (the page was
+// reloaded) is followed again, and one that stopped is shown with how to go on.
+async function checkPublishState() {
+  if (publishPoll) return;
+  const st = await api('/api/publish/status').catch(() => null);
+  const job = st && st.job;
+  if (!job || job.dryRun) return;
+  if (job.running) { publishSeen = -1; renderPublishPanel(job); watchPublish(); return; }
+  const jp = jobPart(job);
+  if ((job.error || job.stopped) && jp && jp.p.items.some(i => !i.sentAt) && inPostsView()) renderPublishPanel(job);
 }
 
 // Follows a running publish: progress panel, and the ticks in the list as posts go out.
@@ -2672,9 +2768,10 @@ function showSpellDialog(issues, resolve, { goLabel = 'Publish', cancel = true }
 
 // quiet: from the review window, where spelling and the yes are done already; its
 // progress shows in that window.
-async function publishPart(r, p, { quiet = false } = {}) {
-  reviewPublishing = quiet;
-  const panelNote = note => { if (quiet) $('#postsStatus').textContent = note; else renderPublishPanel(null, note); };
+// review: that window is open and shows the progress.
+async function publishPart(r, p, { quiet = false, review = quiet } = {}) {
+  reviewPublishing = review;
+  const panelNote = note => { if (review) $('#postsStatus').textContent = note; else renderPublishPanel(null, note); };
   if (!quiet) {
   // WhatsApp shows statuses in the order they were posted: an earlier part sent later
   // would come after this one (a "Fortsetzung" without its beginning).
@@ -2692,7 +2789,7 @@ async function publishPart(r, p, { quiet = false } = {}) {
       `${changedNow.length === 1 ? 'it is' : 'they are'} updated in the release first.` : ''))) return;
   }
   const unsentQuiet = p.items.filter(i => !i.sentAt).length;
-  const changed = quiet ? [] : p.items.filter(i => releaseChanges(i));
+  const changed = p.items.filter(i => !i.sentAt && releaseChanges(i));
   try {
     let st = await api('/api/publish/status');
     if (st.browser === 'missing') { panelNote('⚠ Google Chrome was not found on this PC'); return; }
@@ -2723,7 +2820,7 @@ async function publishPart(r, p, { quiet = false } = {}) {
     renderPublishPanel(job);
     watchPublish();
   } catch (err) {
-    renderPublishPanel({ release: r.release, part: p.part, done: 0, total: unsentQuiet, error: err.message });
+    renderPublishPanel({ release: r.release, part: p.part, done: 0, total: unsentQuiet, error: err.message, why: 'start' });
   }
 }
 
@@ -2822,16 +2919,15 @@ function setMode(mode, force = false) {
       if (first) selectEntry(first.dataset.key);
       $('#gallery').scrollTop = 0;
     }
-    // A publish that is still running (e.g. after reloading the page): show its progress again.
-    api('/api/publish/status').then(st => {
-      if (st.job && st.job.running) { renderPublishPanel(st.job); watchPublish(); }
-    }).catch(() => {});
     // Release folders may have changed meanwhile (e.g. a part was published): read them again.
+    // Then: a publish that is still running (e.g. after reloading the page) shows its
+    // progress again, and one that stopped says how to go on.
     if (state.folder) {
       loadReleases().then(() => {
         if (!inPostsView()) return;
         renderGallery({ reveal: false });
         renderEditor();
+        checkPublishState();
       });
     }
   } else if (wasPosts || force) {
