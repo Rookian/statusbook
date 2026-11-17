@@ -2094,7 +2094,7 @@ const routes = {
     const dir = releaseDir(body.release, body.part);
     const m = JSON.parse(await fsp.readFile(path.join(dir, RELEASE_FILE), 'utf8'));
     const items = m.items.filter(i => !i.sentAt).map(i => ({
-      file: i.file, caption: i.caption || '', key: i.key,
+      file: i.file, caption: i.caption || '', key: i.key, n: i.n,
       // Text posts go out as WhatsApp text status (publisher.js), not as their picture.
       type: i.type, intro: !!i.intro, picture: !!i.collage, text: i.text, bg: i.bg,
     }));
@@ -2105,7 +2105,12 @@ const routes = {
     if (dryRun && body.limit) items.splice(Number(body.limit));
     const job = publishJob = {
       running: true, release: body.release, part: body.part, total: items.length, done: 0, dryRun,
-      current: items[0].file, error: null, stopRequested: false, started: stampFromDate(new Date()),
+      current: items[0].file, currentKey: items[0].key, error: null, stopRequested: false, started: stampFromDate(new Date()),
+      // For the user: note = { retry: n } (trying a post again) or { slow: true } (still
+      // sending); after it stopped: failedKey, and why = 'uncertain' (Send was clicked,
+      // unknown whether the post went out), 'closed' (the WhatsApp window is gone),
+      // 'refused' (WhatsApp doesn't take the file) or 'error'.
+      note: null, failedKey: null, why: null,
     };
     (async () => {
       try {
@@ -2113,13 +2118,17 @@ const routes = {
           if (!dryRun) await markSent(job.release, job.part, [item.key], true);
           job.done++;
           job.current = items[job.done] ? items[job.done].file : null;
-        }, () => job.stopRequested, dryRun);
+          job.currentKey = items[job.done] ? items[job.done].key : null;
+        }, () => job.stopRequested, dryRun, n => { job.note = n; });
         job.stopped = res.stopped;
       } catch (err) {
         job.error = err.message || String(err);
+        job.failedKey = err.item ? err.item.key : job.currentKey;
+        job.why = err.closed ? 'closed' : err.uncertain ? 'uncertain' : /did not accept/i.test(job.error) ? 'refused' : 'error';
       } finally {
         job.running = false;
         job.current = null;
+        job.note = null;
         job.finished = stampFromDate(new Date());
       }
     })();

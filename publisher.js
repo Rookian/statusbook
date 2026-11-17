@@ -74,11 +74,34 @@ async function clearDialogs() {
 
 const myStatusText = () => page.evaluate(() => ((document.body.innerText.match(/My status\s*\n\s*([^\n]+)/) || [])[1] || ''));
 
-async function waitUntil(test, timeoutMs, what) {
-  const end = Date.now() + timeoutMs;
+// Set right before Send is clicked. An error after that is not safe to repeat: the
+// post may have gone out. Before that, nothing went out and the post can be tried again.
+let sendClicked = false;
+let note = () => {};   // tells the app what is going on, for the user (see publish)
+
+// After Send: sent when "My status" no longer says "Sending…". A slow connection can
+// take minutes for a video, so it waits up to 10 minutes and says so after the first.
+const SENT_QUIET_MS = 60000, SENT_MAX_MS = 600000;
+async function waitUntilSent(label) {
+  const start = Date.now();
+  let blankSince = null, told = false;
   for (;;) {
-    if (await test()) return;
-    if (Date.now() > end) throw new Error(`WhatsApp did not ${what} within ${Math.round(timeoutMs / 1000)} s`);
+    const s = await myStatusText().catch(() => '');
+    if (s && !/sending/i.test(s)) return;
+    // "My status" not on screen (another view came up): open the Status tab again.
+    if (!s) {
+      blankSince = blankSince || Date.now();
+      if (Date.now() - blankSince > 15000) {
+        await clearDialogs().catch(() => {});
+        await page.getByRole('button', { name: 'Status', exact: true }).click().catch(() => {});
+        blankSince = Date.now();
+      }
+    } else {
+      blankSince = null;
+    }
+    const waited = Date.now() - start;
+    if (waited > SENT_QUIET_MS && !told) { told = true; note({ slow: true }); }
+    if (waited > SENT_MAX_MS) throw new Error(`WhatsApp was still sending ${label} after ${Math.round(SENT_MAX_MS / 60000)} minutes`);
     await page.waitForTimeout(500);
   }
 }
@@ -188,12 +211,10 @@ async function postTextOne(text, bg, label, dryRun) {
     await box.waitFor({ state: 'detached', timeout: 15000 });
     return;
   }
+  sendClicked = true;
   await send.click();
   await box.waitFor({ state: 'detached', timeout: 60000 });
-  await waitUntil(async () => {
-    const s = await myStatusText();
-    return s && !/sending/i.test(s);
-  }, 180000, `finish sending ${label}`);
+  await waitUntilSent(label);
 }
 
 // A text-only post (not a day intro, which has a map and stays a picture) goes out as
@@ -239,34 +260,65 @@ async function postOne(file, caption, dryRun) {
     await box.waitFor({ state: 'detached', timeout: 15000 });
     return;
   }
+  sendClicked = true;
   await send.click();
   await box.waitFor({ state: 'detached', timeout: 60000 });
-  // Sent when "My status" no longer says "Sending…".
-  await waitUntil(async () => {
-    const s = await myStatusText();
-    return s && !/sending/i.test(s);
-  }, 180000, `finish sending ${path.basename(file)}`);
+  await waitUntilSent(path.basename(file));
 }
+
+// WhatsApp Web loaded again from scratch, for a post that failed twice.
+async function reloadWhatsApp() {
+  await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+  for (let i = 0; i < 120; i++) {
+    if ((await loginState()) === 'ready') return;
+    await page.waitForTimeout(500);
+  }
+}
+
+const TRIES = 3;
+const windowGone = err => !page || page.isClosed() || /has been closed|Target closed/i.test(err.message || '');
 
 // items: [{ file, caption, key }] in posting order; onPosted(item) is awaited after each
 // post; shouldStop() is checked between posts. dryRun: nothing is sent (for testing).
-async function publish(items, dir, onPosted, shouldStop, dryRun = false) {
+// onNote({ retry, slow } | null): something the user should know about the post that
+// is going out (null: back to normal).
+//
+// A post that fails before Send was clicked is tried again by itself, up to three
+// times (the third time after loading WhatsApp Web anew). After Send it is never
+// repeated automatically, because it may have gone out: that error is marked
+// `uncertain`, and the user decides. Every error carries its `item`.
+async function publish(items, dir, onPosted, shouldStop, dryRun = false, onNote = () => {}) {
   if ((await loginState()) !== 'ready') throw new Error('WhatsApp Web is not signed in');
+  note = onNote;
   for (const item of items) {
     if (shouldStop()) return { stopped: true };
-    try {
-      if (isTextStatus(item)) {
-        const texts = statusTexts(item);
-        for (let i = 0; i < texts.length; i++) {
-          await postTextOne(texts[i], item.bg, texts.length > 1 ? `${item.file} (${i + 1}/${texts.length})` : item.file, dryRun);
+    const texts = isTextStatus(item) ? statusTexts(item) : null;
+    let textsDone = 0;  // parts of a long text that are out already (never sent twice)
+    for (let attempt = 1; ; attempt++) {
+      sendClicked = false;
+      try {
+        if (texts) {
+          for (; textsDone < texts.length; textsDone++) {
+            sendClicked = false;
+            await postTextOne(texts[textsDone], item.bg, texts.length > 1 ? `${item.file} (${textsDone + 1}/${texts.length})` : item.file, dryRun);
+          }
+        } else {
+          await postOne(path.join(dir, item.file), item.caption, dryRun);
         }
-      } else {
-        await postOne(path.join(dir, item.file), item.caption, dryRun);
+        break;
+      } catch (err) {
+        err.item = item;
+        if (windowGone(err)) throw Object.assign(err, { closed: true });
+        if (sendClicked) throw Object.assign(err, { uncertain: true });
+        await discardEditor().catch(() => {});
+        // A file WhatsApp refuses is refused again; everything else is worth another try.
+        if (attempt >= TRIES || /did not accept/i.test(err.message)) throw err;
+        onNote({ retry: attempt + 1 });
+        if (attempt === TRIES - 1) await reloadWhatsApp();
+        else await page.waitForTimeout(3000);
       }
-    } catch (err) {
-      await discardEditor();
-      throw err;
     }
+    onNote(null);
     await onPosted(item);
   }
   return { stopped: false };
