@@ -2508,12 +2508,14 @@ function renderPublishPanel(job, note) {
   panel.classList.toggle('error', v.bad);
   const bar = el('progress', { max: String(v.bar[1]) });
   bar.value = v.bar[0];
-  panel.append(
+  // (append() would write a missing part out as the word "null".)
+  panel.append(...[
     el('span', { class: 'text', title: v.detail || null }, el('b', {}, `${v.bad ? '⚠ ' : ''}${v.where}: ${v.title}. `), v.text),
     v.running ? bar : null,
     v.running ? el('button', { disabled: job.stopRequested ? '' : null, onclick: () => api('/api/publish/stop', {}).catch(err => toast(err.message)) }, '■ Stop after this post') : null,
     ...publishActions(v),
-    v.running ? null : el('button', { onclick: () => { panel.hidden = true; } }, 'Close'));
+    v.running ? null : el('button', { onclick: () => { panel.hidden = true; } }, 'Close'),
+  ].filter(Boolean));
 }
 
 // When Releases or Compose comes up: a publish that is still running (the page was
