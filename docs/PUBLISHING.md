@@ -11,8 +11,12 @@
    sign-in is kept in `whatsapp-profile\` next to the app.
 4. The tool posts the part in that window, in order, with captions. The panel at the
    top shows the progress; each post is ticked as sent as soon as WhatsApp has sent it.
-5. **■ Stop after this post** pauses. If something goes wrong, it stops and shows why.
-   Publish again continues with the rest; nothing is posted twice.
+5. **■ Stop after this post** pauses. A post that fails before it was sent is tried
+   again by itself, up to three times. If publishing still stops, the app says why and
+   offers **Continue**; nothing is posted twice.
+6. If WhatsApp is still sending a post after 10 minutes, the app can't tell whether it
+   went out. It asks you to look at your phone: **It is there: continue** ticks the post,
+   **It is not there: send it again** repeats it.
 
 How it works: `publisher.js` controls that Chrome window with Playwright
 (`playwright-core`, uses the installed Chrome). It finds WhatsApp Web's controls by
