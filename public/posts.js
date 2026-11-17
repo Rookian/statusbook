@@ -809,7 +809,6 @@ function partSection(r, p) {
   const range = p.items.length ? `${p.items[0].file.split('_')[0]}–${p.items[p.items.length - 1].file.split('_')[0]}` : '';
   // In a release with several parts, the release's name is in the line above them.
   const title = p.parts > 1 ? `Part ${p.partNo} of ${p.parts}` : `Release ${releaseTitle(r.release)}`;
-  const keys = p.items.map(i => i.key);
   return gallerySection(`part:${r.release}|${p.part}`, !allSent, allSent ? 'gsec-sent' : 'gsec-ready', title, [
     sentChip(sent, p.items.length),
     el('span', { class: 'days' }, dayRange(p.items)),
@@ -822,8 +821,8 @@ function partSection(r, p) {
       onclick: () => publishPart(r, p),
     }, ic('send'), sent ? `Continue publishing (${p.items.length - sent} left)` : 'Publish'),
     allSent
-      ? el('button', { onclick: () => setPartSent(r, p, keys, false) }, 'Mark as not sent')
-      : el('button', { title: 'Only if you posted it yourself', onclick: () => setPartSent(r, p, keys, true) }, '✓ Mark as sent'),
+      ? el('button', { title: 'Removes the ticks of all its posts', onclick: () => setAllSent(r, p, false) }, 'Mark all as not sent')
+      : el('button', { title: 'Only if you posted them yourself. Nothing is posted.', onclick: () => setAllSent(r, p, true) }, '✓ Mark all as sent'),
   ], grid => fillItems(grid, p.items.map(item => ({
     item, sentAt: item.sentAt, release: r.release, part: p.part, src: releaseFileUrl(r.release, p.part, item.file),
   }))));
@@ -2822,6 +2821,20 @@ async function publishPart(r, p, { quiet = false, review = quiet } = {}) {
   } catch (err) {
     renderPublishPanel({ release: r.release, part: p.part, done: 0, total: unsentQuiet, error: err.message, why: 'start' });
   }
+}
+
+// The ticks of a whole release (or part) by hand. That is easy to hit next to Publish
+// and changes what goes out, so it asks first.
+function setAllSent(r, p, sent) {
+  const name = (p.parts > 1 ? `part ${p.partNo} of ` : '') + `Release ${releaseTitle(r.release)}`;
+  const open = p.items.filter(i => !i.sentAt).length, total = p.items.length;
+  const ok = sent
+    ? confirm(`Mark ${open === total ? `all ${total} posts` : `the ${open} post${open === 1 ? '' : 's'} that ${open === 1 ? 'is' : 'are'} not sent yet`} of ${name} as sent?\n\n` +
+      'Nothing is posted to WhatsApp. Do this only if you posted them yourself: Publish will skip them.\n\n' +
+      'To post them, choose Cancel and click Publish instead.')
+    : confirm(`Remove the "sent" ticks of all ${total} posts of ${name}?\n\n` +
+      'They count as not sent again, and the next Publish posts every one of them to WhatsApp, also those that are out already.');
+  if (ok) setPartSent(r, p, p.items.map(i => i.key), sent);
 }
 
 async function setPartSent(r, p, keys, sent) {
