@@ -419,10 +419,17 @@ const dayMapUrl = day => {
 };
 
 // Loads the map once; when it arrives, the intro cards and the preview are redrawn.
-function dayMapState(day) {
+// A map that failed (e.g. offline) is tried again when it is needed and the last try
+// is more than 15 s ago, or at once with retry (button, before making a release file).
+const MAP_RETRY_MS = 15000;
+function dayMapState(day, { retry = false } = {}) {
   const url = dayMapUrl(day);
   if (!url) return { none: true };
   let s = posts.dayMaps.get(url);
+  if (s && s.error && (retry || Date.now() - s.failedAt > MAP_RETRY_MS)) {
+    posts.dayMaps.delete(url);
+    s = null;
+  }
   if (!s) {
     s = { loading: true };
     posts.dayMaps.set(url, s);
@@ -432,6 +439,8 @@ function dayMapState(day) {
       img.onerror = async () => {
         // The server answers errors as JSON (e.g. the API is not turned on for the key).
         try { s.error = (await (await fetch(url)).json()).error; } catch { s.error = 'Could not load the map'; }
+        s.error = s.error || 'Could not load the map';
+        s.failedAt = Date.now();
         s.loading = false;
         resolve(s);
         redrawIntros(day);
@@ -441,6 +450,16 @@ function dayMapState(day) {
   }
   return s;
 }
+
+// Back online: every map that failed is loaded again.
+function retryFailedMaps() {
+  const days = new Set();
+  for (const [url, s] of posts.dayMaps) if (s.error) { posts.dayMaps.delete(url); }
+  for (const e of posts.entries) if (e.cfg && e.cfg.intro) days.add(e.cfg.intro.day);
+  for (const day of days) if (dayPins(day).length) dayMapState(day);
+  for (const day of days) redrawIntros(day);
+}
+window.addEventListener('online', retryFailedMaps);
 
 function redrawIntros(day) {
   for (const e of posts.entries) if (e.cfg && e.cfg.intro && e.cfg.intro.day === day) refreshCard(e);
@@ -1268,7 +1287,8 @@ function renderIntroInfo(e) {
   const box = $('#introInfo');
   const link = dayMapLink(day);
   const status = [
-    s.error ? el('div', { class: 'warnline' }, s.error) : null,
+    s.error ? el('div', { class: 'warnline' }, `Map not loaded: ${s.error}`,
+      el('button', { class: 'linkbtn', onclick: () => { dayMapState(day, { retry: true }); renderEditor(); redrawIntros(day); } }, '↻ Load map again')) : null,
     s.loading ? el('div', { class: 'muted' }, 'Loading the map from Google Maps …') : null,
     link ? el('small', { class: 'muted' }, `🗺 Added to the caption automatically (${dayPins(day).length === 1 ? 'pin' : state.mapPageUrl ? 'all pins, own map page' : 'area of the day'}): `,
       el('a', { href: link, target: '_blank', rel: 'noopener' }, 'open map link ↗')) : null,
@@ -2188,9 +2208,9 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
   } else {
     // A text post. A day intro needs its map loaded before it is drawn.
     if (v.intro) {
-      const s = dayMapState(v.intro.day);
+      const s = dayMapState(v.intro.day, { retry: true });  // a map that failed earlier gets another try
       if (s.ready) await s.ready;
-      if (s.error) throw new Error(s.error);
+      if (s.error) throw new Error(`Day intro ${germanDay(v.intro.day)}: the map could not be loaded (${s.error})`);
     }
     // A collage needs its photos loaded at real size.
     if (v.collage) await collageReady(v.collage);
