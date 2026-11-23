@@ -445,6 +445,8 @@ dialog progress { width: 100%; height: 10px; accent-color: var(--ink); }
 .formerror { margin: 0 0 8px; padding: 8px 12px; border-radius: 10px; background: #fdecea; color: #a12a22; font-size: 13px; line-height: 1.4; }
 .formerror.warn { background: #fff4d6; color: #7a5200; }
 input.invalid { border-color: #c8372d; box-shadow: 0 0 0 2px rgba(200, 55, 45, .18); }
+.daysrow { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font-weight: 600; }
+.daysrow select { flex: 1; min-width: 0; font: inherit; font-weight: 500; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: #fff; }
 .pubactions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
 .pubactions:empty { display: none; }
 #postsPhase { font-weight: 600; margin: 0 0 6px; }

@@ -42,7 +42,7 @@ Inside a journey you put together **releases**, the batches you post to your Sta
 | **1. New release** | Start the next release of the journey. There is always one draft at a time. |
 | **2. Pick** | Browse every photo and video by day. **F** picks a photo or a whole video, **I** / **O** mark a scene in a video. Files that went out in an earlier release are locked, so nothing is posted twice. |
 | **3. Arrange** | Each pick is a post. Write captions, add text posts, put the posts in order, and add a **day intro** (date, map with a pin for every spot, Google Maps link). |
-| **4. Review & publish** | A short review in one window: the posts in order, posts without a caption, long videos that get split, and a spelling check. Then one click on **Publish**: Statusbook makes the files (photos scaled if needed, scenes cut to MP4 under 9.9 MB, long scenes split into 90-second pieces) and posts them to your WhatsApp Status through WhatsApp Web, one after the other, in order and with captions. Each post is ticked as sent; you can stop at any time and publish the rest later. |
+| **4. Review & publish** | Choose up to which day you publish now (the first two days of the draft by default; the later days stay in the draft for the next release). A short review in one window: the posts in order, posts without a caption, long videos that get split, and a spelling check. Then one click on **Publish**: Statusbook makes the files (photos scaled if needed, scenes cut to MP4 under 9.9 MB, long scenes split into 90-second pieces) and posts them to your WhatsApp Status through WhatsApp Web, one after the other, in order and with captions. Each post is ticked as sent; you can stop at any time and publish the rest later. |
 
 ## Features
 

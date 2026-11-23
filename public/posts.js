@@ -1872,6 +1872,15 @@ async function exportVideoPost(body) {
 // What a release takes: the draft, i.e. every post not in a release yet.
 const exportList = () => exportEntries().filter(isNew);
 
+// Publishing only part of the draft: its days up to and including publishUntil (null:
+// all of it). The later days stay in the draft for the next release. Cutting at a day
+// keeps the order: WhatsApp shows statuses in the order they were posted.
+const PUBLISH_DAYS_DEFAULT = 2;
+let publishUntil = null;
+const postDay = e => (e.time || '').slice(0, 10);
+const draftDays = () => [...new Set(exportList().map(postDay).filter(Boolean))].sort();
+const releaseList = () => (publishUntil ? exportList().filter(e => postDay(e) <= publishUntil) : exportList());
+
 // Releases live in their folders (WhatsApp\Releases); the server reads them.
 async function loadReleases() {
   if (!state.folder) { posts.releases = []; return; }
@@ -1984,12 +1993,16 @@ function releaseParts(allItems) {
 
 function openPostsExport() {
   if (!hasDraft() || !exportList().length) { toast('Pick photos and scenes for the release first'); return; }
+  // The first two days by default; all of them when there are no more than that.
+  const days = draftDays();
+  publishUntil = days.length > PUBLISH_DAYS_DEFAULT ? days[PUBLISH_DAYS_DEFAULT - 1] : null;
+  renderPublishDays();
   updatePostsExportInfo();
   // Which videos need more posts to stay sharp takes a moment to measure.
-  if (exportList().some(e => e.type === 'video')) {
+  if (releaseList().some(e => e.type === 'video')) {
     videoCheckRunning = true;
     updatePostsExportInfo();
-    checkVideoPieces(exportList()).finally(() => {
+    checkVideoPieces(releaseList()).finally(() => {
       videoCheckRunning = false;
       if ($('#postsDlg').open && !$('#postsSetup').hidden) updatePostsExportInfo();
     });
@@ -2029,6 +2042,36 @@ async function checkVideoPieces(list) {
   }
 }
 
+// The choice which days go out now: "up to Mo 16.11. (25 posts)" … "all days (60 posts)".
+function renderPublishDays() {
+  const days = draftDays(), list = exportList();
+  const sel = $('#postsDays');
+  $('#postsDaysRow').hidden = days.length < 2;
+  // As many as the window then says: with automatic day intros and split videos.
+  const posts = l => releaseParts(releaseItems(l)).flatMap(p => p.items).length;
+  const n = k => `${k} post${k === 1 ? '' : 's'}`;
+  const label = d => parseStamp(d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  sel.replaceChildren(
+    ...days.slice(0, -1).map((d, i) => el('option', { value: d },
+      `${i === 0 ? 'only' : 'up to'} ${label(d)} · ${i + 1} day${i ? 's' : ''}, ${n(posts(list.filter(e => postDay(e) <= d)))}`)),
+    el('option', { value: '' }, `all ${days.length} days · ${n(posts(list))}`));
+  sel.value = publishUntil || '';
+}
+
+function setPublishUntil(day) {
+  publishUntil = day || null;
+  updatePostsExportInfo();
+  reviewSpell();   // only what goes out is checked (texts checked before are not sent again)
+  if (releaseList().some(e => e.type === 'video')) {
+    videoCheckRunning = true;
+    updatePostsExportInfo();
+    checkVideoPieces(releaseList()).finally(() => {
+      videoCheckRunning = false;
+      if ($('#postsDlg').open && !$('#postsSetup').hidden) updatePostsExportInfo();
+    });
+  }
+}
+
 // "Show" next to a check: back to Compose with that post selected.
 function showPostFromReview(key) {
   $('#postsDlg').close();
@@ -2038,7 +2081,7 @@ function showPostFromReview(key) {
 
 function updatePostsExportInfo() {
   const L = posts.limits;
-  const list = exportList();
+  const list = releaseList();
   const items = releaseItems(list);
   const parts = releaseParts(items);
   const files = parts.flatMap(p => p.items);
@@ -2051,7 +2094,11 @@ function updatePostsExportInfo() {
     $('#postsGo').replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Checking the videos …');
   }
   $('#postsExportSummary').textContent = !files.length ? 'Nothing to publish with this choice.'
-    : `${files.length} post${files.length === 1 ? ' goes' : 's go'} to your WhatsApp Status, in this order` + (days ? ` (${days})` : '') + '.';
+    : `${files.length} post${files.length === 1 ? ' goes' : 's go'} to your WhatsApp Status, in this order` + (days ? ` (${days})` : '') + '.' +
+      (() => {
+        const rest = exportList().length - list.length;
+        return rest > 0 ? ` The other ${rest} post${rest === 1 ? '' : 's'} stay in the draft for the next release.` : '';
+      })();
   // The posts in order, small; a click goes to that post in Compose.
   const strip = $('#postsThumbs');
   strip.replaceChildren(...files.map((it, i) => {
@@ -2122,7 +2169,7 @@ function updatePostsExportInfo() {
 let reviewSpellState = { status: 'idle', issues: [] };
 let reviewSpellRun = 0;
 let reviewSpellPromise = null;
-const reviewSpellPart = () => ({ items: exportList().map((e, i) => ({ postKey: e.key, n: i + 1 })) });
+const reviewSpellPart = () => ({ items: releaseList().map((e, i) => ({ postKey: e.key, n: i + 1 })) });
 
 function reviewSpell() {
   reviewSpellPromise = reviewSpellCheck();
@@ -2292,7 +2339,7 @@ async function updateInRelease(r, p, items) {
 
 // Publish in the review window: spelling check, then the files, then WhatsApp.
 async function reviewPublish() {
-  const list = exportList();
+  const list = releaseList();
   if (!list.length) return;
   // Spelling first, on the posts as they are now; nothing has been made yet. A check
   // still running from the review is awaited, so the texts aren't sent twice.
@@ -2317,7 +2364,7 @@ async function reviewPublish() {
 }
 
 async function runPostsExport() {
-  const list = exportList();
+  const list = releaseList();
   if (!list.length) return null;
   $('#postsSetup').hidden = true;
   $('#postsProgress').hidden = false;
@@ -2384,7 +2431,9 @@ async function runPostsExport() {
   // The draft is a release now. A failed file stays in the draft (it's in no release
   // yet), so it can be tried again with a new draft.
   const title = `Release ${releaseTitle(release)}`;
-  delete posts.data.draft;
+  // Days left for later stay in the draft (now the next release).
+  publishUntil = null;
+  if (!exportList().length) delete posts.data.draft;
   savePosts();
   setMode('releases', true);  // redrawn even when Releases is open already
   finish(`${ok} of ${items.length} files made for ${title}` +
@@ -3065,6 +3114,7 @@ function initPosts() {
   $('#origStop').addEventListener('click', () => api('/api/originals/stop', {}).catch(err => toast(err.message)));
   $('#origReveal').addEventListener('click', () => api('/api/originals/reveal', {}).catch(err => toast(err.message)));
   $('#postsGo').addEventListener('click', reviewPublish);
+  $('#postsDays').addEventListener('change', ev => setPublishUntil(ev.target.value));
   $('#postsSplit').addEventListener('change', ev => {
     localStorage.setItem('media-picker-split', ev.target.checked ? 'on' : 'off');
     updatePostsExportInfo();
