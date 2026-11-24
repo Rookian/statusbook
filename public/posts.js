@@ -686,7 +686,16 @@ function draftCard() {
   }
   const list = exportEntries().filter(isNew);
   const days = dayRangeOf(list);
-  return el('div', { class: 'draft-card' },
+  // Days of this draft that are out already (published up to a day).
+  const done = draftReleases();
+  const doneItems = done.flatMap(r => r.parts.flatMap(p => p.items));
+  const doneSent = doneItems.filter(i => i.sentAt).length;
+  const doneLine = done.length ? el('div', { class: 'draft-done' },
+    ic('check'),
+    el('span', {}, `Partly published: ${dayRange(doneItems)} went out as ${releaseNames(done)}` +
+      (doneSent === doneItems.length ? '' : ` (${doneSent} of ${doneItems.length} sent so far)`) +
+      `. ${list.length ? `Still to publish: ${days || `${list.length} posts`}.` : 'Nothing left to publish.'}`)) : null;
+  return el('div', { class: 'draft-card' + (done.length ? ' partly' : '') },
     ic('leaf'),
     el('b', {}, draftTitle()),
     el('span', { class: 'chip new' }, 'Draft'),
@@ -695,8 +704,24 @@ function draftCard() {
     el('button', { onclick: () => setMode('pick'), title: 'Step 1: pick photos and video scenes' }, ic('pick'), '1 · Pick'),
     el('button', { onclick: () => setMode('arrange'), title: 'Step 2: captions, text posts, day intros, order' }, ic('arrange'), '2 · Compose'),
     el('button', { class: 'primary', disabled: list.length ? null : '', onclick: openPostsExport, title: 'A last look, then everything goes to your WhatsApp Status' }, ic('send'), 'Review & publish'),
-    el('button', { class: 'quiet', onclick: deleteDraft, title: 'Unpick everything in this draft' }, ic('trash'), 'Delete draft'));
+    el('button', { class: 'quiet', onclick: deleteDraft, title: 'Unpick everything in this draft' }, ic('trash'), 'Delete draft'),
+    doneLine);
 }
+
+// Releases made from the current draft: publishing only some of its days (Review &
+// publish) leaves the rest in the draft. Every release made after the draft was started
+// came from it, because a draft that is published completely ends.
+function draftReleases() {
+  const d = posts.data.draft;
+  if (!d || !d.created) return [];
+  return posts.releases.filter(r => r.created && r.created >= d.created);
+}
+
+// "Release 10" or "Releases 10 and 11", with their numbers as shown in Releases.
+const releaseNames = list => {
+  const nos = list.map(r => posts.releases.indexOf(r) + 1);
+  return nos.length === 1 ? `Release ${nos[0]}` : `Releases ${nos.slice(0, -1).join(', ')} and ${nos[nos.length - 1]}`;
+};
 
 // "Sat 24 Oct – Mon 26 Oct" for posts (dayRange is for released files).
 const dayRangeOf = list => dayRange(list.map(e => ({ postKey: e.key })));
@@ -810,11 +835,23 @@ const releaseFileUrl = (release, part, file) =>
 const lastSent = items => items.map(i => i.sentAt).filter(Boolean).sort().pop();
 
 // The days the files of a release (part) were taken: "Sun 19 Oct – Wed 22 Oct".
-function dayRange(items) {
-  const days = items.map(i => {
+// The day of each file of a release, as it was sent: a day intro's day, a photo's or
+// video's time taken; a text post or collage belongs to the day of the file before it.
+// (Not the post's place in Compose today, which may have moved since.) Items without a
+// file are posts of the draft: their time in Compose.
+function itemDays(items) {
+  let prev = '';
+  return items.map(i => {
+    const own = ((i.intro && i.intro.day) || i.taken || '').slice(0, 10);
+    if (own) return (prev = own);
+    if (i.file) return prev;
     const e = entryFor(i.postKey || i.key);
-    return ((e && e.time) || (i.intro && i.intro.day) || i.taken || '').slice(0, 10);
-  }).filter(Boolean).sort();
+    return ((e && e.time) || '').slice(0, 10);
+  });
+}
+
+function dayRange(items) {
+  const days = itemDays(items).filter(Boolean).sort();
   if (!days.length) return '';
   const fmt = d => parseStamp(d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   const first = days[0], last = days[days.length - 1];
@@ -828,9 +865,12 @@ function partSection(r, p) {
   const range = p.items.length ? `${p.items[0].file.split('_')[0]}–${p.items[p.items.length - 1].file.split('_')[0]}` : '';
   // In a release with several parts, the release's name is in the line above them.
   const title = p.parts > 1 ? `Part ${p.partNo} of ${p.parts}` : `Release ${releaseTitle(r.release)}`;
+  // Made from the draft, whose later days are not published yet.
+  const fromDraft = draftReleases().includes(r) && exportList().length;
   return gallerySection(`part:${r.release}|${p.part}`, !allSent, allSent ? 'gsec-sent' : 'gsec-ready', title, [
     sentChip(sent, p.items.length),
     el('span', { class: 'days' }, dayRange(p.items)),
+    fromDraft ? el('span', { class: 'chip draftrest', title: `The later days of the same draft are not published yet: ${dayRangeOf(exportList())}` }, `↪ rest in ${draftTitle()} (draft)`) : null,
     el('span', { class: 'muted' }, `files ${range}` + (allSent ? ` · sent ${shortDate(lastSent(p.items))}` : '')),
     changed ? el('span', { class: 'chip changed', title: 'Changed after the release was made; updated in the release when you publish' }, `✎ ${changed} changed`) : null,
     el('span', { class: 'grow' }),
@@ -850,17 +890,17 @@ function partSection(r, p) {
 // The files of a release part as cards, with a line for each day.
 function fillItems(grid, rows) {
   let lastDay = null;
-  for (const row of rows) {
+  const days = itemDays(rows.map(r => r.item));
+  rows.forEach((row, k) => {
     const e = entryFor(row.item.postKey || row.item.key);
-    const time = e ? e.time : row.item.intro ? row.item.intro.day : row.item.taken || '';
-    const day = (time || '').slice(0, 10);
+    const day = days[k];
     if (day !== lastDay) {
-      grid.append(el('div', { class: 'gday' }, dayLabel(time)));
+      grid.append(el('div', { class: 'gday' }, dayLabel(day ? `${day}T12:00:00` : '')));
       lastDay = day;
     }
     const num = row.item.file.split('_')[0];
     grid.append(e ? renderCard(e, num, row) : goneCard(row, num));
-  }
+  });
 }
 
 // A released file whose post doesn't exist any more (unstarred, scene changed, text deleted).

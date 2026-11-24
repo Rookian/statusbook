@@ -290,6 +290,10 @@ dialog progress { width: 100%; height: 10px; accent-color: var(--ink); }
 .draft-card b { font-size: 18px; font-weight: 700; color: var(--text); }
 .draft-card .grow { flex: 1; }
 .draft-card .chip.new { background: #fff; color: var(--lagoon-text); }
+/* A draft that was published in part: what went out, and what is left */
+.draft-done { flex-basis: 100%; display: flex; align-items: flex-start; gap: 8px; margin-top: 4px; padding: 8px 12px; border-radius: 12px; background: rgba(255, 255, 255, .7); color: var(--text); font-size: 13px; line-height: 1.4; }
+.draft-done .icon { width: 16px; height: 16px; flex: none; margin-top: 1px; color: #2e7d32; }
+.chip.draftrest { background: #e3f1ef; color: var(--lagoon-text); }
 .draft-card.empty { background: transparent; border: 1.5px dashed rgba(12, 53, 50, .25); color: var(--muted); justify-content: space-between; }
 
 /* sections: a release part, or the draft's posts */
