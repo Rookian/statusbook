@@ -646,6 +646,8 @@ function renderGallery({ reveal = true } = {}) {
     return;
   }
   g.append(draftCard());
+  const sum = releasedSummary();
+  if (sum) g.append(sum);
   if (posts.releases.some(r => r.parts.some(p => p.items.some(i => i.type === 'video' && i.sentAt)))) {
     g.append(el('div', { class: 'gnote export-line' },
       el('span', { class: 'grow' }, 'The video scenes you sent, in original quality, e.g. for your Google Drive.'),
@@ -657,7 +659,7 @@ function renderGallery({ reveal = true } = {}) {
       const all = r.parts.flatMap(p => p.items);
       g.append(el('div', { class: 'gnote rel-line' },
         el('b', {}, `Release ${releaseTitle(r.release)}`),
-        ` · ${dayRange(all)} · ${all.length} files in ${r.partsTotal} parts`));
+        ` · ${dayRange(all)} · ${plural(all.length, 'post')} in ${r.partsTotal} parts`));
     }
     if (r.parts.length < r.partsTotal) {
       g.append(el('div', { class: 'gnote warnline' }, `Release ${releaseTitle(r.release)}: only ${r.parts.length} of ${r.partsTotal} parts are complete (the export was interrupted).`));
@@ -706,6 +708,37 @@ function draftCard() {
     el('button', { class: 'primary', disabled: list.length ? null : '', onclick: openPostsExport, title: 'A last look, then everything goes to your WhatsApp Status' }, ic('send'), 'Review & publish'),
     el('button', { class: 'quiet', onclick: deleteDraft, title: 'Unpick everything in this draft' }, ic('trash'), 'Delete draft'),
     doneLine);
+}
+
+// What files of releases hold: photos (also those in a collage), videos (a scene split
+// into pieces counts once) and text posts (day intros and text-only posts).
+// sentOnly: only what went out.
+function mediaCount(items, sentOnly = false) {
+  const c = { photos: 0, videos: 0, texts: 0 };
+  const scenes = new Set();
+  for (const i of items) {
+    if (sentOnly && !i.sentAt) continue;
+    if (i.type === 'image') c.photos++;
+    else if (i.type === 'video') scenes.add(i.postKey || i.key);
+    else if (i.collage) c.photos += (i.sources || []).length || 1;
+    else c.texts++;
+  }
+  c.videos = scenes.size;
+  return c;
+}
+const plural = (n, one, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
+// The whole journey's releases: how many photos and videos went out, and how many are
+// in releases not sent yet.
+function releasedSummary() {
+  const all = posts.releases.flatMap(r => r.parts.flatMap(p => p.items));
+  if (!all.length) return null;
+  const sent = mediaCount(all, true), made = mediaCount(all);
+  const open = (made.photos - sent.photos) + (made.videos - sent.videos);
+  return el('div', { class: 'released-sum' },
+    el('div', { class: 'big' }, el('b', {}, (sent.photos + sent.videos).toLocaleString()), ' photos and videos sent'),
+    el('span', { class: 'muted' }, `${sent.photos.toLocaleString()} photos, ${sent.videos.toLocaleString()} videos · in ${plural(posts.releases.length, 'release')}` +
+      (open ? ` · ${open} more not sent yet` : '')));
 }
 
 // Releases made from the current draft: publishing only some of its days (Review &
@@ -871,7 +904,7 @@ function partSection(r, p) {
     sentChip(sent, p.items.length),
     el('span', { class: 'days' }, dayRange(p.items)),
     fromDraft ? el('span', { class: 'chip draftrest', title: `The later days of the same draft are not published yet: ${dayRangeOf(exportList())}` }, `↪ rest in ${draftTitle()} (draft)`) : null,
-    el('span', { class: 'muted' }, `files ${range}` + (allSent ? ` · sent ${shortDate(lastSent(p.items))}` : '')),
+    el('span', { class: 'muted', title: `Files ${range}` }, plural(p.items.length, 'post') + (allSent ? ` · sent ${shortDate(lastSent(p.items))}` : '')),
     changed ? el('span', { class: 'chip changed', title: 'Changed after the release was made; updated in the release when you publish' }, `✎ ${changed} changed`) : null,
     el('span', { class: 'grow' }),
     el('button', { title: 'Open the folder of this part', onclick: () => api('/api/reveal', { release: r.release, part: p.part }).catch(err => toast(err.message)) }, ic('folder')),

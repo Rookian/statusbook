@@ -439,6 +439,11 @@ dialog progress { width: 100%; height: 10px; accent-color: var(--ink); }
 #collageHint { margin: 6px 0 0; font-size: 12.5px; }
 @media (max-width: 700px) { .collage-grid { grid-template-columns: 1fr; justify-items: center; } }
 /* Releases: the line for exporting the sent scenes, and its dialog */
+/* Releases: how many photos and videos went out so far */
+.released-sum { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; margin: 0 4px 4px; }
+.released-sum .big { font-size: 15px; color: var(--text); }
+.released-sum .big b { font-size: 22px; font-weight: 700; color: var(--lagoon-text); margin-right: 2px; }
+.released-sum .muted { font-size: 12.5px; }
 .export-line { display: flex; align-items: center; gap: 10px; }
 .export-line .grow { flex: 1; }
 #origDlg { width: min(620px, 94vw); }
