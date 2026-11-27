@@ -2096,7 +2096,7 @@ const routes = {
     const items = m.items.filter(i => !i.sentAt).map(i => ({
       file: i.file, caption: i.caption || '', key: i.key, n: i.n,
       // Text posts go out as WhatsApp text status (publisher.js), not as their picture.
-      type: i.type, intro: !!i.intro, picture: !!i.collage, text: i.text, bg: i.bg,
+      type: i.type, intro: !!i.intro, picture: !!(i.collage || i.mapsum), text: i.text, bg: i.bg,
     }));
     if (!items.length) throw Object.assign(new Error('Everything in this part is sent already'), { code: 400 });
     if ((await publisher.loginState()) !== 'ready') throw Object.assign(new Error('Sign in to WhatsApp Web first'), { code: 409 });
