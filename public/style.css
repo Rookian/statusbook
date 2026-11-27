@@ -417,6 +417,21 @@ dialog progress { width: 100%; height: 10px; accent-color: var(--ink); }
 #postsThumbs .rthumb i { position: absolute; right: 2px; bottom: 1px; color: #fff; font-style: normal; font-size: 10px; text-shadow: 0 0 3px #000; }
 #postsThumbs .rthumb:hover { outline: 2px solid #0b7d78; }
 #postsSplitRow { display: flex; gap: 6px; align-items: center; margin: 0 0 10px; font-size: 13px; }
+/* Map summary and the spots of a map */
+.linkbtn { background: none; border: none; padding: 0; color: #0b7d78; cursor: pointer; font: inherit; text-decoration: underline; box-shadow: none; }
+.spots-head .linkbtn { white-space: nowrap; }
+#mapsumInfo { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+#mapsumInfo select, .range-pick select { font: inherit; padding: 5px 8px; border-radius: 9px; border: 1px solid var(--line); background: #fff; max-width: 100%; }
+.range-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.spots-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12.5px; margin-bottom: 6px; }
+.spots { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow-y: auto; padding-right: 4px; }
+.spot { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; }
+.spot:hover { background: rgba(11, 125, 120, .08); }
+.spot img, .spot .noimg { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; flex: none; display: grid; place-items: center; background: #e6ecea; }
+.spot .when { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.spot .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spot.off { opacity: .45; }
+.spot.off .name { text-decoration: line-through; }
 /* Collage: its line in the editor and its dialog */
 .collage-line { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
 #collageDlg { width: min(980px, 97vw); }

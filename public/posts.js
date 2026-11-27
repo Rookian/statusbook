@@ -133,6 +133,9 @@ function releaseChanges(item, e = entryFor(item.postKey || item.key)) {
         !!item.intro.noLocation !== !!e.cfg.noLocation;
     }
     if (v.collage && item.collage) picture = item.collage !== collageSig(v.collage); // photos, layout or look changed
+    // Spots on the map left out, or the time frame changed.
+    const was = (item.intro && item.intro.sig) || (item.mapsum && item.mapsum.sig);
+    if (was && v.map && was !== mapSig(v.map)) picture = true;
   } else if (item.format) {
     picture = item.format !== 'original';  // an old file with a blurred background
   }
@@ -298,8 +301,15 @@ function postView(e) {
   // Day intro: fixed layout, the date on top and the map below it.
   // Without any location there is no map, so the date moves to the middle.
   if (e.cfg.intro) {
-    Object.assign(v, { intro: e.cfg.intro, size: 'l', style: 'shadow', bg: e.cfg.bg || INTRO_BG,
-      position: dayPins(e.cfg.intro.day).length ? 'top' : 'middle' });
+    const map = pinsOf(e.cfg);
+    Object.assign(v, { intro: e.cfg.intro, map, size: 'l', style: 'shadow', bg: e.cfg.bg || INTRO_BG,
+      position: map.length ? 'top' : 'middle' });
+  }
+  // Map summary: the same layout, its text made from the time frame unless written.
+  if (e.cfg.mapsum) {
+    const map = pinsOf(e.cfg);
+    Object.assign(v, { mapsum: e.cfg.mapsum, map, size: 'l', style: 'shadow', bg: e.cfg.bg || INTRO_BG,
+      position: map.length ? 'top' : 'middle', text: e.cfg.text || mapsumText(e.cfg) });
   }
   return v;
 }
@@ -341,7 +351,7 @@ function drawBackground(ctx, post, media, scale) {
     ctx.fillStyle = post.bg || BG_COLORS[0];
     ctx.fillRect(0, 0, SW, SH);
     // A day without any location gets just the date, without an empty map box.
-    if (post.intro && dayPins(post.intro.day).length) drawDayMap(ctx, post.intro.day, scale);
+    if (post.map && post.map.length) drawMapBox(ctx, post.map);
     return;
   }
   ctx.fillStyle = '#000';
@@ -386,44 +396,130 @@ function onRotated(it) {
   if (typeof renderGallery === 'function' && inPostsView()) renderGallery({ reveal: false });
 }
 
-// ---------- day intro maps ----------
+// ---------- maps: day intros and map summaries ----------
+// A day intro (cfg.intro = { day }) shows the spots of one day. A map summary
+// (cfg.mapsum = { scope, from, to }) shows those of a time frame: scope 'range' (a week
+// is a range from Monday to Sunday) or 'release' (the days of the release it goes out
+// with). Both can leave out single spots: cfg.hidden = ["lat,lon", …] (pinKey).
 
-// The pins of a day's map: the locations from its files, or else the place typed in
-// for the intro; none if the location was left out.
-function dayPins(day) {
-  const t = introFor(day);
-  if (t && t.noLocation) return [];
-  const pins = autoDayPins(day);
-  if (!pins.length && t && t.place) pins.push({ lat: t.place.lat, lon: t.place.lon });
-  return pins;
+const pinKey = p => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`;
+const MAX_PINS = 60;
+
+// "2026-11-16" plus n days.
+function addDays(day, n) {
+  const [y, m, d] = day.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + n));
+  return t.toISOString().slice(0, 10);
+}
+function daysBetween(from, to) {
+  const out = [];
+  for (let d = from; d && d <= to && out.length < 400; d = addDays(d, 1)) out.push(d);
+  return out;
+}
+// Monday of the week a day is in.
+function weekStart(day) {
+  const [y, m, d] = day.split('-').map(Number);
+  const wd = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+  return addDays(day, -wd);
+}
+// "16.11." and "16.–22.11." / "30.11.–6.12."
+const shortDay = d => `${+d.slice(8, 10)}.${+d.slice(5, 7)}.`;
+function dayRangeDe(from, to) {
+  if (!from) return '';
+  if (!to || from === to) return shortDay(from);
+  return from.slice(0, 7) === to.slice(0, 7) ? `${+from.slice(8, 10)}.–${shortDay(to)}` : `${shortDay(from)}–${shortDay(to)}`;
+}
+
+// The text of a map summary until one is written: what it covers.
+function mapsumText(t) {
+  const days = mapsumDays(t);
+  const range = dayRangeDe(days[0], days[days.length - 1]);
+  if (t.mapsum.scope === 'release') return range ? `Rückblick\n${range}` : 'Rückblick';
+  return t.mapsum.week ? `Die Woche\n${range}` : range;
+}
+
+// A short fingerprint of the spots on a map, to notice a change after a release was made.
+function mapSig(pins) {
+  let h = 5381;
+  for (const ch of (pins || []).map(pinKey).join('|')) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+  return `${(pins || []).length}:${h.toString(36)}`;
 }
 
 // Every location from the photos and videos of that day (not only the starred
-// ones), with spots closer than about 10 m merged into one pin.
+// ones), with spots closer than about 10 m merged into one pin. Each pin knows the
+// first file taken there (pin.it), for the list of spots.
 function autoDayPins(day) {
   const seen = new Set(), pins = [];
-  const byTime = state.items.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const byTime = state.items.filter(it => it.geo && (it.date || '').startsWith(day))
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   for (const it of byTime) {
-    if (!it.geo || !(it.date || '').startsWith(day)) continue;
-    const k = `${it.geo.lat.toFixed(4)},${it.geo.lon.toFixed(4)}`;
+    const k = pinKey(it.geo);
     if (seen.has(k)) continue;
     seen.add(k);
-    pins.push(it.geo);
+    pins.push({ lat: it.geo.lat, lon: it.geo.lon, it });
   }
   return pins.slice(0, 80);
 }
 
-const dayMapUrl = day => {
-  const pins = dayPins(day);
-  return pins.length ? `/daymap?w=${MAP_BOX.w / 2}&h=${MAP_BOX.h / 2}&p=${pins.map(p => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join('|')}` : null;
-};
+// Many spots (a week): spots close together become one pin, closer ones first,
+// until the map has at most MAX_PINS (the map stays readable, the link short).
+function thinPins(pins) {
+  for (const dec of [3, 2, 1]) {
+    if (pins.length <= MAX_PINS) break;
+    const seen = new Set();
+    pins = pins.filter(p => {
+      const k = `${p.lat.toFixed(dec)},${p.lon.toFixed(dec)}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
+  return pins.slice(0, MAX_PINS);
+}
 
-// Loads the map once; when it arrives, the intro cards and the preview are redrawn.
+// The days a map summary covers. A whole-release summary follows the release being
+// made (and the days chosen in Review & publish); once it is in a release, the days
+// it went out with (fixed when its file was made).
+function mapsumDays(t) {
+  const m = t.mapsum;
+  if (m.scope === 'release') {
+    if (m.fixed && t.id && !isNew({ key: `txt:${t.id}` })) return m.fixed.days || [];
+    return [...new Set(releaseList().filter(e => e.kind === 'media').map(postDay).filter(Boolean))].sort();
+  }
+  return daysBetween(m.from, m.to || m.from);
+}
+
+// The pins of a day intro or map summary (t: its stored settings). all: also the
+// spots that were left out.
+function pinsOf(t, { all = false } = {}) {
+  if (!t) return [];
+  let pins = [];
+  if (t.mapsum) {
+    pins = thinPins(mapsumDays(t).flatMap(autoDayPins));
+  } else if (t.intro) {
+    if (t.noLocation) return [];
+    pins = autoDayPins(t.intro.day);
+    if (!pins.length && t.place) pins.push({ lat: t.place.lat, lon: t.place.lon, typed: true });
+  }
+  if (all || !Array.isArray(t.hidden) || !t.hidden.length) return pins;
+  const hidden = new Set(t.hidden);
+  return pins.filter(p => !hidden.has(pinKey(p)));
+}
+
+// The pins of a day's map: the locations from its files, or else the place typed in
+// for the intro; none if the location was left out.
+const dayPins = day => pinsOf(introFor(day) || { intro: { day } });
+
+const mapUrl = pins => (pins && pins.length
+  ? `/daymap?w=${MAP_BOX.w / 2}&h=${MAP_BOX.h / 2}&p=${pins.map(p => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join('|')}`
+  : null);
+
+// Loads a map once; when it arrives, the map posts and the preview are redrawn.
 // A map that failed (e.g. offline) is tried again when it is needed and the last try
 // is more than 15 s ago, or at once with retry (button, before making a release file).
 const MAP_RETRY_MS = 15000;
-function dayMapState(day, { retry = false } = {}) {
-  const url = dayMapUrl(day);
+function mapState(pins, { retry = false } = {}) {
+  const url = mapUrl(pins);
   if (!url) return { none: true };
   let s = posts.dayMaps.get(url);
   if (s && s.error && (retry || Date.now() - s.failedAt > MAP_RETRY_MS)) {
@@ -435,7 +531,7 @@ function dayMapState(day, { retry = false } = {}) {
     posts.dayMaps.set(url, s);
     s.ready = new Promise(resolve => {
       const img = new Image();
-      img.onload = () => { s.img = img; s.loading = false; resolve(s); redrawIntros(day); };
+      img.onload = () => { s.img = img; s.loading = false; resolve(s); redrawMaps(); };
       img.onerror = async () => {
         // The server answers errors as JSON (e.g. the API is not turned on for the key).
         try { s.error = (await (await fetch(url)).json()).error; } catch { s.error = 'Could not load the map'; }
@@ -443,33 +539,40 @@ function dayMapState(day, { retry = false } = {}) {
         s.failedAt = Date.now();
         s.loading = false;
         resolve(s);
-        redrawIntros(day);
+        redrawMaps();
       };
       img.src = url;
     });
   }
   return s;
 }
+const dayMapState = (day, opts) => mapState(dayPins(day), opts);
+
+const isMapPost = e => !!(e && e.cfg && (e.cfg.intro || e.cfg.mapsum));
 
 // Back online: every map that failed is loaded again.
 function retryFailedMaps() {
-  const days = new Set();
-  for (const [url, s] of posts.dayMaps) if (s.error) { posts.dayMaps.delete(url); }
-  for (const e of posts.entries) if (e.cfg && e.cfg.intro) days.add(e.cfg.intro.day);
-  for (const day of days) if (dayPins(day).length) dayMapState(day);
-  for (const day of days) redrawIntros(day);
+  for (const [url, s] of posts.dayMaps) if (s.error) posts.dayMaps.delete(url);
+  for (const e of posts.entries) if (isMapPost(e)) mapState(postView(e).map);
+  redrawMaps();
 }
 window.addEventListener('online', retryFailedMaps);
 
-function redrawIntros(day) {
-  for (const e of posts.entries) if (e.cfg && e.cfg.intro && e.cfg.intro.day === day) refreshCard(e);
-  const cur = curEntry();
-  if (cur && cur.cfg.intro && cur.cfg.intro.day === day) { drawPostPreview(); renderEditor(); }
+// A map arrived (or failed): the cards and the preview of map posts are drawn again.
+let mapRedraw = 0;
+function redrawMaps() {
+  cancelAnimationFrame(mapRedraw);
+  mapRedraw = requestAnimationFrame(() => {
+    for (const e of posts.entries) if (isMapPost(e)) refreshCard(e);
+    const cur = curEntry();
+    if (isMapPost(cur)) { drawPostPreview(); renderEditor(); }
+  });
 }
+const redrawIntros = () => redrawMaps();
 
-function drawDayMap(ctx, day, scale) {
+function drawMapBox(ctx, pins) {
   const { x, y, w, h } = MAP_BOX;
-  const s = dayMapState(day);
+  const s = mapState(pins);
   ctx.save();
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, 36);
@@ -483,7 +586,7 @@ function drawDayMap(ctx, day, scale) {
     ctx.font = `600 44px ${POST_FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const msg = s.none ? 'Keine Orte an diesem Tag' : s.error ? 'Karte nicht verfügbar' : 'Karte wird geladen …';
+    const msg = s.none ? 'Keine Orte' : s.error ? 'Karte nicht verfügbar' : 'Karte wird geladen …';
     ctx.fillText(msg, x + w / 2, y + h / 2);
   }
   ctx.restore();
@@ -513,14 +616,13 @@ function encodePins(pins) {
 // with "mapPageUrl" in settings.json, the own map page with every pin of the day,
 // numbered in time order; without it, Google Maps on the day's area (a plain Google
 // link can't carry many pins).
-function dayMapLink(day) {
-  const pins = dayPins(day);
-  if (!pins.length) return null;
+// The map link that goes into the caption: one pin opens Google Maps there, more pins
+// the own map page with all of them (title on top), or else Google Maps on their area.
+function mapLink(pins, title) {
+  if (!pins || !pins.length) return null;
   const f = n => n.toFixed(5).replace(/0+$/, '').replace(/\.$/, '');
   if (pins.length === 1) return `https://www.google.com/maps/search/?api=1&query=${f(pins[0].lat)},${f(pins[0].lon)}`;
   if (state.mapPageUrl) {
-    const t = introFor(day);
-    const title = [germanDay(day), t && t.place && t.place.label].filter(Boolean).join(' · ');
     return `${state.mapPageUrl.replace(/#.*$/, '')}#t=${encodeURIComponent(title)}&p=${encodePins(pins)}`;
   }
   const lats = pins.map(p => p.lat), lons = pins.map(p => p.lon);
@@ -536,11 +638,21 @@ function dayMapLink(day) {
   return `https://www.google.com/maps/@?api=1&map_action=map&center=${f((s + n) / 2)},${f((w + e) / 2)}&zoom=${zoom}`;
 }
 
+// The title of a map post's link: a day intro's date and place, a summary's first line.
+function mapTitle(t, v) {
+  if (t.intro) return [germanDay(t.intro.day), t.place && t.place.label].filter(Boolean).join(' · ');
+  return (v.text || '').split('\n').map(x => x.trim()).filter(Boolean).join(' · ');
+}
+const dayMapLink = day => {
+  const t = introFor(day) || { intro: { day } };
+  return mapLink(dayPins(day), mapTitle(t, {}));
+};
+
 // The caption that goes to WhatsApp: your text, and for a day intro its map link,
 // on one line (WhatsApp Web takes no line breaks).
 function fullCaption(e, v) {
   const text = (v.caption || '').trim().replace(/\s*\n\s*/g, ' ');
-  const link = v.intro ? dayMapLink(v.intro.day) : null;
+  const link = v.map ? mapLink(v.map, mapTitle(e.cfg, v)) : null;
   return [text, link ? `🗺 ${link}` : ''].filter(Boolean).join(' ');
 }
 
@@ -830,6 +942,7 @@ function newSection() {
     el('span', { class: 'chip new' }, `Draft · ${n} post${n === 1 ? '' : 's'}`),
     el('span', { class: 'grow' }),
     el('button', { onclick: () => openCollage(), title: 'Put two to four photos of this release together as one post' }, '▦ Collage'),
+    el('button', { onclick: addMapSummary, title: 'A map of the spots of a week, a time frame of your choice or the whole release' }, '🗺 Map summary'),
     el('button', {
       class: 'primary', disabled: n ? null : '', onclick: openPostsExport,
       title: 'A last look, then everything goes to your WhatsApp Status',
@@ -1009,7 +1122,7 @@ function renderCard(e, num, row = null) {
   if (!row && e.removed) frame.append(el('div', { class: 'gone' }, 'Removed'));
   if (missing) frame.append(el('div', { class: 'gone' }, 'File missing'));
   const time = e.time ? e.time.slice(11, 16) : '';
-  const name = e.type === 'text' ? (e.cfg.intro ? 'Day intro' : e.cfg.collage ? 'Collage' : 'Text') : e.source;
+  const name = e.type === 'text' ? (e.cfg.intro ? 'Day intro' : e.cfg.mapsum ? 'Map summary' : e.cfg.collage ? 'Collage' : 'Text') : e.source;
   const caption = row ? row.item.caption || '' : fullCaption(e, v);
   const card = el('div', {
     class: 'card' + (e.key === posts.selKey ? ' sel' : '') + (!row && e.removed ? ' removed' : '') + (row ? ' rel' : ''),
@@ -1068,8 +1181,8 @@ async function viewPost(e) {
   // files of the part this post is in.
   if (e.kind === 'media' && e.item) { openInFocus(e.item, e.start || 0, browseFiles(e)); return; }
   const v = postView(e);
-  if (v.intro) {
-    const s = dayMapState(v.intro.day);
+  if (v.map && v.map.length) {
+    const s = mapState(v.map);
     if (s.ready) await s.ready;
   }
   if (v.collage) await collageReady(v.collage).catch(err => toast(err.message));
@@ -1077,7 +1190,7 @@ async function viewPost(e) {
   canvas.width = SW;
   canvas.height = SH;
   renderPost(canvas, v, null, 1, false);
-  openViewer({ title: v.intro ? 'Day intro' : v.collage ? 'Collage' : 'Text post', type: 'canvas', canvas });
+  openViewer({ title: v.intro ? 'Day intro' : v.mapsum ? 'Map summary' : v.collage ? 'Collage' : 'Text post', type: 'canvas', canvas });
 }
 
 // Drag a card onto another: dropped on its left half it goes in front, on the right half behind.
@@ -1182,17 +1295,22 @@ function renderEditor() {
   // Text on the picture and its look only exist for text-only posts.
   const isText = e.type === 'text';
   const isIntro = !!(e.cfg && e.cfg.intro);
+  const isMapsum = !!(e.cfg && e.cfg.mapsum);
   const isCollage = !!(e.cfg && e.cfg.collage);
   for (const id of ['#pTextField', '#pBgField']) $(id).hidden = !isText || isCollage;
-  // A day intro has a fixed layout (date on top, map below); a collage has no text on it.
-  for (const id of ['#pPosField', '#pStyleField', '#pSizeField']) $(id).hidden = !isText || isIntro || isCollage;
+  // Day intros and map summaries have a fixed layout (text on top, map below); a collage has no text on it.
+  for (const id of ['#pPosField', '#pStyleField', '#pSizeField']) $(id).hidden = !isText || isIntro || isMapsum || isCollage;
+  $('#mapsumField').hidden = !isMapsum;
+  if (isMapsum) renderMapsumInfo(e);
+  $('#spotsField').hidden = !(isIntro || isMapsum) || pinsOf(e.cfg, { all: true }).length < 2 || !!(e.cfg.noLocation);
+  if (!$('#spotsField').hidden) renderSpots(e);
   $('#collageField').hidden = !isCollage;
   if (isCollage) $('#collageInfo').textContent = `${e.cfg.collage.images.length} photos · ${collageTemplate(e.cfg.collage.tpl).name.toLowerCase()}`;
   $('#introField').hidden = !isIntro;
   if (isIntro) renderIntroInfo(e);
   $('#geoField').hidden = isText;
   $('#speciesField').hidden = isText;
-  $('#pRemove').textContent = isCollage ? '🗑 Split up collage' : e.type === 'text' ? '🗑 Delete text post' : e.removed ? '↩ Restore post' : '✕ Remove post';
+  $('#pRemove').textContent = isCollage ? '🗑 Split up collage' : isMapsum ? '🗑 Delete map summary' : e.type === 'text' ? '🗑 Delete text post' : e.removed ? '↩ Restore post' : '✕ Remove post';
   const info = [];
   if (e.type === 'video') {
     info.push(`Scene ${e.sceneNo} of ${e.source}: ${fmtTime(e.start)} → ${fmtTime(e.end)} (${postLen(e).toFixed(1)} s` +
@@ -1201,7 +1319,8 @@ function renderEditor() {
   }
   if (e.type === 'image') info.push(`Photo ${e.source}.`);
   if (isCollage) info.push('Goes out as one picture. Its photos are no posts of their own while they are in the collage.');
-  if (isText && !isIntro && !isCollage) {
+  if (isMapsum) info.push('Goes out as a picture with the map; the caption gets a link to all its spots.');
+  if (isText && !isIntro && !isMapsum && !isCollage) {
     // Sent as WhatsApp's own text status (publisher.js), not as the picture shown here.
     const full = [v.text, v.caption].map(t => (t || '').trim()).filter(Boolean).join('\n\n');
     const n = splitStatusText(full).length;
@@ -1429,9 +1548,8 @@ function leaveOutLocation(e) {
 // Looks up the place names of the day's spots (one per area of about 1 km, at most
 // 6 lookups) and adds them as a line under the date, e.g. "Ubud · Tegallalang".
 async function addDayPlaces(e) {
-  const day = e.cfg.intro.day;
   const areas = new Map();
-  for (const p of dayPins(day)) {
+  for (const p of postView(e).map || []) {
     const k = `${p.lat.toFixed(2)},${p.lon.toFixed(2)}`;
     if (!areas.has(k)) areas.set(k, p);
   }
@@ -1450,13 +1568,126 @@ async function addDayPlaces(e) {
     }
   }
   if (!names.length) { toast('No place names found'); return; }
-  const first = (e.cfg.text || germanDay(day)).split('\n')[0];
+  const first = (postView(e).text || (e.cfg.intro ? germanDay(e.cfg.intro.day) : '')).split('\n')[0];
   editPost({ text: `${first}\n${names.slice(0, 4).join(' · ')}` });
   $('#pText').value = postView(e).text;
 }
 
 // A day intro in front of the day's first post: the German date as the heading,
 // a map with a pin for every photo and video of that day that has a location.
+// ---------- map summaries ----------
+
+// The days of the journey that have photos or videos, for choosing a time frame.
+const journeyDays = () => [...new Set(state.items.map(it => (it.date || '').slice(0, 10)).filter(Boolean))].sort();
+
+// A map summary of the week (Monday to Sunday) of the selected post, or of the first
+// post of the draft; it goes after the last post of that week. Its time frame can be
+// changed in the editor.
+function addMapSummary() {
+  if (!state.folder || !hasDraft()) { toast('Start a new release first (＋ New release)'); return; }
+  const list = visibleEntries().filter(e => isNew(e) && !e.removed);
+  const cur = curEntry();
+  const base = (cur && isNew(cur) && postDay(cur)) || (list.find(postDay) && postDay(list.find(postDay)));
+  if (!base) { toast('Pick photos or scenes for this release first'); return; }
+  const from = weekStart(base), to = addDays(from, 6);
+  const last = [...list].reverse().find(e => postDay(e) && postDay(e) <= to);
+  const extra = { mapsum: { scope: 'range', week: true, from, to }, text: '', bg: INTRO_BG };
+  if (last) insertTextAfter(last, extra);
+  else insertTextPost(lastAnchor(), posts.data.texts.length, extra);
+  toast(`Map summary of the week ${dayRangeDe(from, to)} added. Change its time frame on the right.`);
+}
+
+function setMapsum(e, patch) {
+  const m = { ...e.cfg.mapsum, ...patch };
+  if (m.scope !== 'release') delete m.fixed;
+  if (m.from && m.to && m.to < m.from) [m.from, m.to] = [m.to, m.from];
+  editPost({ mapsum: m });
+}
+
+// Editor of a map summary: what it covers, how many spots, the map's state.
+function renderMapsumInfo(e) {
+  const m = e.cfg.mapsum, box = $('#mapsumInfo');
+  const days = mapsumDays(e.cfg), all = journeyDays();
+  const v = postView(e), pins = v.map || [];
+  const kind = m.scope === 'release' ? 'release' : m.week ? 'week' : 'range';
+  const released = !isNew(e);
+  const seg = el('div', { class: 'seg' }, ...[['week', 'A week'], ['range', 'From – to'], ['release', 'Whole release']].map(([k, label]) =>
+    el('button', { class: k === kind ? 'on' : null, disabled: released ? '' : null, onclick: () => {
+      const start = days[0] || all[0];
+      if (k === 'week') { const f = weekStart(start); setMapsum(e, { scope: 'range', week: true, from: f, to: addDays(f, 6) }); }
+      if (k === 'range') setMapsum(e, { scope: 'range', week: false, from: days[0] || all[0], to: days[days.length - 1] || all[0] });
+      if (k === 'release') setMapsum(e, { scope: 'release', week: false });
+    } }, label)));
+  const daySelect = (value, onchange, list = all) => {
+    const sel = el('select', { disabled: released ? '' : null, onchange: ev => onchange(ev.target.value) },
+      ...list.map(d => el('option', { value: d }, `${germanDay(d)}`)));
+    sel.value = value;
+    return sel;
+  };
+  let choose = null;
+  if (kind === 'week') {
+    const weeks = [...new Set(all.map(weekStart))];
+    const sel = el('select', { disabled: released ? '' : null, onchange: ev => setMapsum(e, { from: ev.target.value, to: addDays(ev.target.value, 6) }) },
+      ...weeks.map(w => el('option', { value: w }, `Week ${dayRangeDe(w, addDays(w, 6))}`)));
+    sel.value = weekStart(m.from || all[0]);
+    choose = sel;
+  } else if (kind === 'range') {
+    choose = el('div', { class: 'range-pick' },
+      daySelect(m.from, d => setMapsum(e, { from: d })), el('span', {}, 'to'), daySelect(m.to || m.from, d => setMapsum(e, { to: d })));
+  } else {
+    choose = el('small', { class: 'muted' }, released
+      ? `The days it went out with: ${dayRangeDe(days[0], days[days.length - 1]) || '–'}.`
+      : `The days of the release it goes out with: now ${dayRangeDe(days[0], days[days.length - 1]) || 'none yet'}. Follows what you choose in Review & publish.`);
+  }
+  const s = pins.length ? mapState(pins) : {};
+  const link = v.map ? mapLink(v.map, mapTitle(e.cfg, v)) : null;
+  const daysWith = days.filter(d => autoDayPins(d).length).length;
+  box.replaceChildren(...[
+    seg, choose,
+    el('span', {}, pins.length
+      ? `${pins.length} spot${pins.length === 1 ? '' : 's'} from ${daysWith} day${daysWith === 1 ? '' : 's'} with locations` +
+        (pins.length >= MAX_PINS ? ' (nearby spots merged, so the map stays readable)' : '') + '.'
+      : 'No photo or video of these days has a location, so there is no map.'),
+    s.error ? el('div', { class: 'warnline' }, `Map not loaded: ${s.error}`,
+      el('button', { class: 'linkbtn', onclick: () => { mapState(pins, { retry: true }); renderEditor(); redrawMaps(); } }, '↻ Load map again')) : null,
+    s.loading ? el('div', { class: 'muted' }, 'Loading the map from Google Maps …') : null,
+    link ? el('small', { class: 'muted' }, '🗺 Added to the caption automatically: ', el('a', { href: link, target: '_blank', rel: 'noopener' }, 'open map link ↗')) : null,
+    pins.length ? el('button', { onclick: () => addDayPlaces(e) }, '📍 Add place names to the text') : null,
+  ].filter(Boolean));
+}
+
+// The spots of a day intro or map summary, each with a tick: untick to leave it off the map.
+function renderSpots(e) {
+  const all = pinsOf(e.cfg, { all: true });
+  const hidden = new Set(e.cfg.hidden || []);
+  const shown = all.filter(p => !hidden.has(pinKey(p))).length;
+  const set = keys => editPost({ hidden: keys.length ? keys : undefined });
+  const multiDay = new Set(all.map(p => p.it && (p.it.date || '').slice(0, 10))).size > 1;
+  const box = $('#spotsInfo');
+  const head = el('div', { class: 'spots-head' },
+    el('span', { class: 'muted' }, `${shown} of ${all.length} shown. Untick a spot to leave it off the map.`),
+    hidden.size ? el('button', { class: 'linkbtn', onclick: () => set([]) }, 'Show all') : null);
+  const list = el('div', { class: 'spots' }, ...all.map(p => {
+    const k = pinKey(p), on = !hidden.has(k);
+    const place = posts.places.get(geoKey(p));
+    const it = p.it;
+    const when = it && it.date ? (multiDay ? `${shortDay(it.date.slice(0, 10))} ` : '') + it.date.slice(11, 16) : '';
+    const name = place ? (place.poi || place.name.split(',')[0]) : it ? it.name : 'Place entered by you';
+    return el('label', { class: 'spot' + (on ? '' : ' off'), title: it ? it.name : '' },
+      el('input', { type: 'checkbox', checked: on ? '' : null, onchange: ev => {
+        const next = new Set(hidden);
+        if (ev.target.checked) next.delete(k); else next.add(k);
+        // At least one spot stays: without any, the post would lose its map.
+        if (next.size >= all.length) { ev.target.checked = true; toast('Leave at least one spot on the map'); return; }
+        set([...next]);
+      } }),
+      it ? el('img', { src: thumbSrc(it), loading: 'lazy', alt: '', class: rotClass(it.rotate).trim() || null, style: mediaStyle(it) }) : el('span', { class: 'noimg' }, '📍'),
+      el('span', { class: 'when' }, when),
+      el('span', { class: 'name' }, name));
+  }));
+  box.replaceChildren(head, list);
+}
+
 function addDayIntro(first, day) {
   if (introFor(day)) { selectEntry(`txt:${introFor(day).id}`); return; }
   insertTextBefore(first, { intro: { day }, text: germanDay(day), bg: INTRO_BG });
@@ -2012,7 +2243,7 @@ function autoIntroItem(day) {
       text: t ? `${date}\nFortsetzung` : date,
       // Short: the long story of the day stays with its first part.
       caption: t ? `Fortsetzung vom ${date.split('\n')[0].trim()}` : caption,
-      place: t ? t.place : undefined, noLocation: t ? t.noLocation : undefined,
+      place: t ? t.place : undefined, noLocation: t ? t.noLocation : undefined, hidden: t ? t.hidden : undefined,
     },
   };
   const v = postView(e);
@@ -2179,7 +2410,7 @@ function updatePostsExportInfo() {
     const style = e.kind === 'media' ? mediaStyle(itemOf(e.source)) : null;
     return el('div', { class: 'rthumb' + (e.type === 'text' ? ' text' : ''), title: `${pad2(i + 1)} · ` + (e.type === 'text' ? (postView(e).text || 'Text post').split('\n')[0] : e.source),
       onclick: () => { if (!e.cfg.auto) showPostFromReview(e.key); } },
-    e.type === 'text' ? el('span', {}, e.cfg.intro ? '🗺' : e.cfg.collage ? '▦' : 'Aa')
+    e.type === 'text' ? el('span', {}, e.cfg.intro || e.cfg.mapsum ? '🗺' : e.cfg.collage ? '▦' : 'Aa')
       : el('img', { src: thumbUrl(e), loading: 'lazy', alt: '', class: rotClass(rotOf(e.source)).trim() || null, style }),
     e.type === 'video' ? el('i', {}, '▶') : null);
   }));
@@ -2270,7 +2501,7 @@ function openReviewSpell() {
 }
 
 // "beach", "DJI_0042_95s", "DJI_0042_95s_1of2", "text": the file name after its number.
-const releaseFileBase = it => (it.e.type === 'text' ? (it.e.cfg.collage ? 'collage' : 'text') : fileBase(it.e.source) + (it.e.type === 'video' ? `_${Math.floor(it.start)}s` : '')) +
+const releaseFileBase = it => (it.e.type === 'text' ? (it.e.cfg.collage ? 'collage' : it.e.cfg.mapsum ? 'map' : 'text') : fileBase(it.e.source) + (it.e.type === 'video' ? `_${Math.floor(it.start)}s` : '')) +
   (it.piece ? `_${it.piece.replace('/', 'of')}` : '');
 
 // Makes one file of a release part (it: from releaseItems) and returns its entry for
@@ -2327,10 +2558,16 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
     }
   } else {
     // A text post. A day intro needs its map loaded before it is drawn.
-    if (v.intro) {
-      const s = dayMapState(v.intro.day, { retry: true });  // a map that failed earlier gets another try
+    if (v.map && v.map.length) {
+      const s = mapState(v.map, { retry: true });  // a map that failed earlier gets another try
       if (s.ready) await s.ready;
-      if (s.error) throw new Error(`Day intro ${germanDay(v.intro.day)}: the map could not be loaded (${s.error})`);
+      const what = v.intro ? `Day intro ${germanDay(v.intro.day)}` : `Map summary ${v.text.split('\n').join(' ')}`;
+      if (s.error) throw new Error(`${what}: the map could not be loaded (${s.error})`);
+    }
+    // A summary of the whole release keeps the days it went out with.
+    if (e.cfg.mapsum && e.cfg.mapsum.scope === 'release' && isNew(e)) {
+      e.cfg.mapsum.fixed = { days: mapsumDays(e.cfg) };
+      savePosts();
     }
     // A collage needs its photos loaded at real size.
     if (v.collage) await collageReady(v.collage);
@@ -2355,9 +2592,14 @@ async function makeReleaseFile(where, it, n, canvas, reuse) {
     collage: v.collage ? collageSig(v.collage) : undefined,
     sources: v.collage ? collageNames(v.collage) : undefined,
     // Text layout, so a later change of it can be noticed.
-    look: e.type === 'text' && !v.intro && !v.collage ? { position: v.position, style: v.style, size: v.size } : undefined,
+    look: e.type === 'text' && !v.intro && !v.mapsum && !v.collage ? { position: v.position, style: v.style, size: v.size } : undefined,
+    mapsum: v.mapsum ? (() => {
+      const days = mapsumDays(e.cfg);
+      return { scope: v.mapsum.scope, from: days[0], to: days[days.length - 1], pins: v.map.length,
+        hidden: (e.cfg.hidden || []).length || undefined, sig: mapSig(v.map) };
+    })() : undefined,
     intro: v.intro ? {
-      day: v.intro.day, pins: dayPins(v.intro.day).length,
+      day: v.intro.day, pins: v.map.length, hidden: (e.cfg.hidden || []).length || undefined, sig: mapSig(v.map),
       place: e.cfg.place ? e.cfg.place.label : undefined, noLocation: e.cfg.noLocation || undefined,
       auto: e.cfg.auto || undefined,
     } : undefined,
@@ -2806,7 +3048,7 @@ function spellFields(p) {
     if (!e) continue;
     const v = postView(e);
     if (v.caption.trim()) out.push({ e, n: item.n, field: 'caption', text: v.caption });
-    if (e.type === 'text' && !e.cfg.intro && v.text.trim()) out.push({ e, n: item.n, field: 'text', text: v.text });
+    if (e.type === 'text' && !e.cfg.intro && !e.cfg.mapsum && v.text.trim()) out.push({ e, n: item.n, field: 'text', text: v.text });
   }
   return out;
 }
@@ -3188,6 +3430,8 @@ function initPosts() {
   $('#origReveal').addEventListener('click', () => api('/api/originals/reveal', {}).catch(err => toast(err.message)));
   $('#postsGo').addEventListener('click', reviewPublish);
   $('#postsDays').addEventListener('change', ev => setPublishUntil(ev.target.value));
+  // Back in Compose: the whole draft again (also for a whole-release map summary).
+  $('#postsDlg').addEventListener('close', () => { if (publishUntil) { publishUntil = null; redrawMaps(); } });
   $('#postsSplit').addEventListener('change', ev => {
     localStorage.setItem('media-picker-split', ev.target.checked ? 'on' : 'off');
     updatePostsExportInfo();
