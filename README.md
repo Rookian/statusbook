@@ -137,6 +137,7 @@ Start.bat        starts the server and opens the browser
 
 - [User guide](docs/GUIDE.md): every screen and option in detail
 - [Publishing](docs/PUBLISHING.md): how publishing to WhatsApp Web works, and what to do if it stops
+- [Product requirements (PRD)](docs/PRD.md): what the product does and why, for the product team
 
 ## Good to know
 
