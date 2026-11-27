@@ -7,6 +7,11 @@
   put in order, and published to WhatsApp, from your PC.</b>
 </p>
 
+<p align="center">
+  <img src="docs/statusbook-demo.gif" alt="Statusbook in 40 seconds: pick photos and video scenes, add captions, day intros and collages, then publish to WhatsApp Status" width="100%">
+  <br><sub>40-second tour with demo pictures: pick, compose, review &amp; publish.</sub>
+</p>
+
 ---
 
 ## Why this exists
