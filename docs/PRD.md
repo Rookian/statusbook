@@ -24,18 +24,41 @@ Publishing works by operating WhatsApp Web in a Chrome window, the way a person 
 ## 2. Problem
 
 Sharing a trip day by day on WhatsApp Status is attractive: the audience (family and
-friends) is already there, no new app or album link is needed. Doing it from a phone is
-slow and error-prone:
+friends) is already there, no new app or album link is needed. In practice, doing it with
+WhatsApp alone breaks down at every step.
 
-| Pain | Detail |
-|---|---|
-| Volume | Hundreds of files per week: phone photos, drone flights, snorkeling clips. Finding the good ones on a small screen takes long. |
-| Long videos | A drone flight lasts minutes; the good moment is 10 seconds somewhere in it. Status shows at most 90 s per video. |
-| Hidden limits | WhatsApp Web refuses Status videos over about 10 MB, shows no HD for Status, and its caption field takes no line breaks. |
-| Manual posting | Every post needs its file, caption and position; nothing can be posted in one go. |
-| Order and duplicates | Status shows posts in the order they were sent. Posting a day late or twice breaks the story. |
-| No context | Twenty photos in a row don't tell where and when. |
-| Quality | WhatsApp compresses heavily; badly prepared videos look blocky. |
+**Getting the media together**
+- Photos and videos come from several devices: phone, action cam, drone. They first have to
+  be copied together somewhere before anything can be chosen.
+- The phone has too little space for all of it, and it is no safe place to keep the originals.
+
+**Choosing and preparing**
+- Hundreds of files per week. Finding the good ones on a small screen takes long.
+- A drone flight lasts minutes; the good moment is 10 seconds somewhere in it. WhatsApp's
+  trim tool keeps one segment per video, and there is no slow motion.
+- Pictures need fixing first: turning, cropping, correcting the colours of underwater shots.
+
+**What WhatsApp Status can't do**
+- No drafts: a post can't be prepared now and sent later, and nothing can be planned as a series.
+- No collages, no map of where you were, no day summary with the day's spots.
+- No help with content: which animal is that, where was this taken, is the caption spelled right.
+- Statuses disappear after 24 hours. Followers see a few days at a time, and nothing is
+  kept for later, neither for them nor for the sender.
+
+**WhatsApp's limits**
+- Status videos are at most 90 seconds; WhatsApp Web refuses Status videos over about 10 MB.
+- WhatsApp compresses heavily and has no HD for Status: badly prepared videos look blocky.
+- Captions on WhatsApp Web take no line breaks; a text status takes about 700 characters.
+
+**Posting**
+- Every post is sent by hand, one at a time, with its file and caption: slow for 30 or more posts.
+- Status shows posts in the order they were sent, so a day posted late or a post sent twice
+  breaks the story, and WhatsApp offers no overview of what was already shared.
+- On the road the connection is often bad: posts hang in "sending" and it is unclear whether they arrived.
+
+**After posting**
+- The originals of what was shared should end up in a safe place (e.g. Google Drive), not
+  only on the phone.
 
 ## 3. Goals and non-goals
 
@@ -45,6 +68,7 @@ slow and error-prone:
 - G3: Nothing is posted twice, nothing is lost, and every post's state is visible.
 - G4: Media look as good as WhatsApp allows.
 - G5: Everything stays on the traveler's PC; the original files are never changed.
+- G6: Prepare whenever there is time (also offline), publish when it suits, and keep the originals of what was shared.
 
 **Non-goals (today)**
 - Other networks than WhatsApp Status (Instagram, chats, groups).
