@@ -236,9 +236,20 @@ function buildEntries() {
   // Text posts take the time of what comes before them, for the day headers.
   let lastTime = media.length ? media[0].time : '';
   for (const e of out) {
-    if (e.kind === 'media') lastTime = e.time;
-    // A day intro belongs to its own day, even though it comes after the previous day's last post.
-    else e.time = e.cfg.intro ? `${e.cfg.intro.day}T00:00:00` : lastTime;
+    if (e.kind === 'media') {
+      lastTime = e.time;
+    } else if (e.cfg.intro) {
+      // A day intro belongs to its own day, even though it comes after the previous day's
+      // last post; so do the text posts right after it.
+      e.time = lastTime = `${e.cfg.intro.day}T00:00:00`;
+    } else if (e.cfg.collage) {
+      // A collage belongs to the day of its first photo (where that photo was).
+      const first = itemOf((e.cfg.collage.images[0] || {}).name);
+      e.time = (first && first.date) || lastTime;
+      lastTime = e.time > lastTime ? e.time : lastTime;
+    } else {
+      e.time = lastTime;
+    }
   }
   posts.entries = out;
 }
@@ -849,7 +860,7 @@ function releasedSummary() {
   const open = (made.photos - sent.photos) + (made.videos - sent.videos);
   return el('div', { class: 'released-sum' },
     el('div', { class: 'big' }, el('b', {}, (sent.photos + sent.videos).toLocaleString()), ' photos and videos sent'),
-    el('span', { class: 'muted' }, `${sent.photos.toLocaleString()} photos, ${sent.videos.toLocaleString()} videos · in ${plural(posts.releases.length, 'release')}` +
+    el('span', { class: 'muted' }, `${plural(sent.photos, 'photo')}, ${plural(sent.videos, 'video')} · in ${plural(posts.releases.length, 'release')}` +
       (open ? ` · ${open} more not sent yet` : '')));
 }
 
